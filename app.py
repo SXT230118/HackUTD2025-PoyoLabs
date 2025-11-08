@@ -3,6 +3,15 @@ from flask_cors import CORS
 import requests # Make sure you have run 'pip install requests'
 import random
 import time
+import os
+
+# Optional: NVIDIA Nemotron client (OpenAI-compatible wrapper)
+try:
+    from openai import OpenAI
+    _HAS_NEMOTRON = True
+except Exception:
+    OpenAI = None
+    _HAS_NEMOTRON = False
 
 # --- Setup ---
 app = Flask(__name__)
@@ -50,6 +59,7 @@ def load_static_factory_data():
         print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
         return None
 
+
 # This is now our global, in-memory map of the factory
 factory_static_data = load_static_factory_data()
 if factory_static_data is None:
@@ -79,9 +89,91 @@ def get_cauldron_levels():
 
     # 2. MERGE live data with our static data
     merged_cauldron_data = []
-    
-    # Create a fast-lookup map of the live levels
-    live_levels_map = {cauldron['cauldronId']: cauldron['currentVolume'] for cauldron in live_levels_data}
+
+    # Create a fast-lookup map of the live levels.
+    # The external `/api/Data` response can vary in shape. Be defensive:
+    # - it might be a list, or a dict with a list under keys like 'data' / 'items'
+    # - field names may use `cauldronId`, `id`, `cauldron_id`, etc.
+    live_levels_list = live_levels_data
+    if isinstance(live_levels_data, dict):
+        # common wrappers
+        for wrapper in ('data', 'items', 'results', 'value'):
+            if wrapper in live_levels_data and isinstance(live_levels_data[wrapper], list):
+                live_levels_list = live_levels_data[wrapper]
+                break
+        else:
+            # single-object response
+            if any(k in live_levels_data for k in ('cauldronId', 'id', 'cauldron_id', 'currentVolume', 'current_volume')):
+                live_levels_list = [live_levels_data]
+            else:
+                app.logger.warning("Unexpected /api/Data JSON shape: %s", type(live_levels_data))
+                try:
+                    app.logger.debug("Payload: %s", live_levels_data)
+                except Exception:
+                    pass
+                return jsonify({"error": "Unexpected /api/Data format"}), 500
+
+    # Preferred format (observed in the EOG API): a time series list where each
+    # element is { 'timestamp': ..., 'cauldron_levels': { 'cauldron_001': 123.4, ... } }
+    # If that's what we received, take the most recent timestamp's map.
+    live_levels_map = {}
+    if isinstance(live_levels_list, list) and live_levels_list:
+        # detect time-series shape
+        first = live_levels_list[0]
+        if isinstance(first, dict) and 'cauldron_levels' in first and isinstance(first['cauldron_levels'], dict):
+            # choose the latest record (assume list is chronological; pick last)
+            latest = None
+            for rec in reversed(live_levels_list):
+                if isinstance(rec, dict) and isinstance(rec.get('cauldron_levels'), dict):
+                    latest = rec['cauldron_levels']
+                    break
+            if latest is None:
+                latest = {}
+            # coerce values to floats where possible
+            for k,v in latest.items():
+                try:
+                    live_levels_map[k] = float(v)
+                except Exception:
+                    live_levels_map[k] = v
+        else:
+            # fallback: treat as list of items with id/value fields
+            for item in live_levels_list:
+                if not isinstance(item, dict):
+                    continue
+
+                cauldron_key = None
+                for k in ('cauldronId', 'cauldron_id', 'id'):
+                    if k in item:
+                        cauldron_key = item[k]
+                        break
+
+                if cauldron_key is None and isinstance(item.get('cauldron'), dict):
+                    cauldron_key = item['cauldron'].get('id')
+
+                if cauldron_key is None:
+                    continue
+
+                level = None
+                for lvl_key in ('currentVolume', 'current_volume', 'volume', 'level', 'value', 'current'):
+                    if lvl_key in item:
+                        level = item[lvl_key]
+                        break
+
+                try:
+                    if level is not None:
+                        level = float(level)
+                except Exception:
+                    level = None
+
+                live_levels_map[cauldron_key] = level
+    elif isinstance(live_levels_list, dict):
+        # single-object case already handled above; attempt to extract map
+        if 'cauldron_levels' in live_levels_list and isinstance(live_levels_list['cauldron_levels'], dict):
+            for k,v in live_levels_list['cauldron_levels'].items():
+                try:
+                    live_levels_map[k] = float(v)
+                except Exception:
+                    live_levels_map[k] = v
 
     for static_cauldron in factory_static_data['cauldrons']:
         cauldron_id = static_cauldron['id']
@@ -207,6 +299,54 @@ def forecast_fill_times():
     
     return jsonify(forecasts)
 
+
+@app.route('/api/cauldron/status')
+def cauldron_status():
+    """
+    Returns merged cauldron data including current level, percentage full,
+    and estimated time to full (minutes) by calling existing tools.
+    Frontend dashboard will poll this endpoint.
+    """
+    try:
+        live_levels_response = get_cauldron_levels()
+        if live_levels_response.status_code != 200:
+            return live_levels_response
+        live_levels = live_levels_response.get_json()
+    except Exception as e:
+        return jsonify({"error": f"Could not fetch live levels: {e}"}), 500
+
+    try:
+        forecasts_response = forecast_fill_times()
+        # forecast_fill_times returns a Flask Response via jsonify
+        if isinstance(forecasts_response, tuple):
+            forecasts = forecasts_response[0]
+        else:
+            forecasts = forecasts_response.get_json()
+    except Exception:
+        forecasts = []
+
+    # Build a lookup of forecast by cauldron_id
+    forecast_map = {f.get('cauldron_id'): f for f in (forecasts or [])}
+
+    status_list = []
+    for c in live_levels:
+        max_vol = c.get('max_volume') or 1
+        current = c.get('current_level') or 0
+        try:
+            percent = round((current / float(max_vol)) * 100, 1)
+        except Exception:
+            percent = 0.0
+
+        f = forecast_map.get(c.get('id'))
+        time_to_full_min = f.get('time_to_full_min') if f else None
+
+        status = c.copy()
+        status['percent_full'] = percent
+        status['time_to_full_min'] = time_to_full_min
+        status_list.append(status)
+
+    return jsonify(status_list)
+
 @app.route('/api/logistics/dispatch_courier', methods=['POST'])
 def dispatch_courier():
     """
@@ -235,6 +375,11 @@ def dispatch_courier():
 @app.route('/api/agent/chat', methods=['POST'])
 def handle_agent_chat():
     user_message = request.json.get('message')
+    # Optional: the client can pass `nv_api_key` or set NV_API_KEY env var.
+    nv_api_key = request.json.get('nv_api_key') or os.environ.get('NV_API_KEY')
+    use_nemotron = bool(request.json.get('use_nemotron')) or bool(nv_api_key)
+    # Control whether Nemotron's internal 'reasoning' fragments are exposed in responses
+    show_reasoning = bool(request.json.get('debug')) or bool(os.environ.get('NV_SHOW_REASONING'))
     
     agent_plan = [] 
     agent_final_response = ""
@@ -314,6 +459,78 @@ def handle_agent_chat():
 
     else:
         agent_final_response = "I am connected to the EOG API. I can **check tickets**, **forecast** fill times, **dispatch** couriers, or **optimize routes**."
+    # If requested, refine or generate the final response using NVIDIA Nemotron
+    if use_nemotron:
+        if not _HAS_NEMOTRON:
+            agent_plan.append("Note: Nemotron client not installed; set up 'openai' package to enable.")
+        elif not nv_api_key:
+            agent_plan.append("Note: NV API key not provided; set 'nv_api_key' in the request or NV_API_KEY env var.")
+        else:
+            # Stream from Nemotron and assemble the final response server-side.
+            try:
+                system_msg = (
+                    "You are an assistant integrated with a factory monitoring system. "
+                    "Use the agent plan and tool outputs to craft a concise, actionable reply to the user. "
+                    "Be clear about any suggested actions."
+                )
+
+                context_text = "\n".join(agent_plan)
+                prompt = (
+                    f"Context:\n{context_text}\n\nUser message:\n{user_message}\n\n"
+                    "Provide a short assistant reply based on the context."
+                )
+
+                messages = [
+                    {"role": "system", "content": system_msg},
+                    {"role": "user", "content": prompt}
+                ]
+
+                client = OpenAI(base_url="https://integrate.api.nvidia.com/v1", api_key=nv_api_key)
+                completion = client.chat.completions.create(
+                    model="nvidia/nvidia-nemotron-nano-9b-v2",
+                    messages=messages,
+                    temperature=0.6,
+                    top_p=0.95,
+                    max_tokens=512,
+                    frequency_penalty=0,
+                    presence_penalty=0,
+                    stream=True,
+                    extra_body={"min_thinking_tokens": 256, "max_thinking_tokens": 512}
+                )
+
+                assembled = []
+                reasoning_parts = []
+                # iterate streamed deltas and collect content
+                for chunk in completion:
+                    try:
+                        delta = chunk.choices[0].delta
+                    except Exception:
+                        delta = None
+
+                    if delta is None:
+                        continue
+
+                    reasoning = getattr(delta, 'reasoning_content', None)
+                    content = getattr(delta, 'content', None)
+                    if content is None:
+                        content = getattr(delta, 'text', None)
+
+                    if reasoning:
+                        reasoning_parts.append(str(reasoning))
+                    if content:
+                        assembled.append(str(content))
+
+                final_text = "".join(assembled).strip()
+                if final_text:
+                    agent_final_response = final_text
+                    agent_plan.append("Tool Result: Response generated by Nemotron (stream).")
+                    # Optionally attach reasoning to the plan for debugging
+                    if reasoning_parts and show_reasoning:
+                        agent_plan.append("Nemotron reasoning: " + " ".join(reasoning_parts))
+                else:
+                    agent_plan.append("Warning: Nemotron streamed no text; keeping local response.")
+            except Exception as e:
+                agent_plan.append(f"Nemotron call failed: {str(e)}")
 
     return jsonify({
         "agent_response": agent_final_response,

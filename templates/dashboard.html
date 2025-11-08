@@ -132,41 +132,56 @@
         
         // --- 1. EOG: Render the Cauldron Dashboard ---
         
-       async function updateCauldronLevels() {
+        async function updateCauldronLevels() {
             try {
-                // This API endpoint now returns an ARRAY of cauldrons
-                const response = await fetch('/api/cauldron/levels');
-                const cauldrons = await response.json(); 
-                
+                // This endpoint returns array of cauldrons + percent + time_to_full_min
+                const response = await fetch('/api/cauldron/status');
+                const cauldrons = await response.json();
+
                 cauldronGrid.innerHTML = ''; // Clear the grid
-                
-                // Loop over the ARRAY
+
                 for (const data of cauldrons) {
-                    
-                    // Create the HTML element for the cauldron
                     const cauldronEl = document.createElement('div');
                     cauldronEl.classList.add('cauldron');
-                    
-                    // The API data has 'current_level' and 'max_volume'
-                    const currentLevel = data.current_level || 0;
-                    const maxVolume = data.max_volume || 1; // Avoid divide by zero
-                    
-                    // Calculate percentage
-                    const percent = Math.round((currentLevel / maxVolume) * 100);
-                    
-                    // Check for anomaly flag
+
+                    const currentLevel = Number(data.current_level || 0);
+                    const maxVolume = Number(data.max_volume || 1);
+                    const percent = Math.max(0, Math.min(100, Number(data.percent_full || ((currentLevel / maxVolume) * 100))));
+
+                    // Color-code based on fullness
                     if (data.anomaly) {
                         cauldronEl.classList.add('anomaly');
+                    } else if (percent >= 90) {
+                        cauldronEl.style.border = '2px solid #f39c12';
+                    } else if (percent >= 75) {
+                        cauldronEl.style.border = '2px solid #f1c40f';
                     }
-                    
+
+                    // Format time to fill
+                    let timeToFillText = '—';
+                    if (data.time_to_full_min !== null && data.time_to_full_min !== undefined) {
+                        const mins = Number(data.time_to_full_min);
+                        if (isFinite(mins)) {
+                            if (mins < 60) {
+                                timeToFillText = `${Math.round(mins)} min`;
+                            } else {
+                                const hrs = Math.floor(mins / 60);
+                                const rem = Math.round(mins % 60);
+                                timeToFillText = `${hrs}h ${rem}m`;
+                            }
+                        }
+                    }
+
                     cauldronEl.innerHTML = `
                         <div class="cauldron-name">${data.name}</div>
-                        <div>${percent}% Full</div>
+                        <div>${percent.toFixed(1)}% Full</div>
                         <small>(${currentLevel.toFixed(0)}L / ${maxVolume}L)</small>
-                        <div class.level-bar-container">
+                        <div class="level-bar-container">
                             <div class="level-bar" style="width: ${percent}%"></div>
                         </div>
+                        <div style="margin-top:8px;font-size:0.9em;color:#ddd">Time to full: <strong>${timeToFillText}</strong></div>
                     `;
+
                     cauldronGrid.appendChild(cauldronEl);
                 }
             } catch (error) {
