@@ -1,5 +1,13 @@
-from flask import Flask, jsonify, request, render_template, send_from_directory
+from flask import Flask, jsonify, request, render_template, send_from_directory, redirect, url_for, session
 from flask_cors import CORS
+try:
+    from authlib.integrations.flask_client import OAuth
+    _HAVE_AUTHLIB = True
+except Exception:
+    OAuth = None
+    _HAVE_AUTHLIB = False
+from functools import wraps
+from urllib.parse import quote_plus, urlencode
 import requests # Make sure you have run 'pip install requests'
 import statistics
 import time
@@ -85,6 +93,86 @@ except Exception:
 # --- Setup ---
 app = Flask(__name__)
 CORS(app) 
+
+# Session configuration. If SECRET_KEY is not set, use an ephemeral key for
+# local development (but warn loudly).
+app.secret_key = os.environ.get("SECRET_KEY")
+if not app.secret_key:
+    print("[auth] WARNING: SECRET_KEY not set; using ephemeral key for dev. Set SECRET_KEY in env for production.")
+    app.secret_key = os.urandom(24)
+
+# If authlib is available and Auth0 env vars exist, register OAuth. Otherwise
+# provide no-op/dummy routes so the app remains runnable in development.
+if _HAVE_AUTHLIB and os.environ.get("AUTH0_DOMAIN"):
+    oauth = OAuth(app)
+    oauth.register(
+        "auth0",
+        client_id=os.environ.get("AUTH0_CLIENT_ID"),
+        client_secret=os.environ.get("AUTH0_CLIENT_SECRET"),
+        client_kwargs={
+            "scope": "openid profile email",
+        },
+        server_metadata_url=f'https://{os.environ.get("AUTH0_DOMAIN")}/.well-known/openid-configuration'
+    )
+
+    def requires_auth(f):
+        @wraps(f)
+        def decorated(*args, **kwargs):
+            if 'user' not in session:
+                return redirect(url_for('login'))
+            return f(*args, **kwargs)
+        return decorated
+
+    @app.route('/login')
+    def login():
+        return oauth.auth0.authorize_redirect(redirect_uri=url_for("callback", _external=True))
+
+    @app.route('/callback')
+    def callback():
+        try:
+            token = oauth.auth0.authorize_access_token()
+            session["user"] = token
+            return redirect(url_for("dashboard"))
+        except Exception as e:
+            print(f"Auth error: {e}")
+            return redirect(url_for("index"))
+
+    @app.route('/logout')
+    def logout():
+        session.clear()
+        return redirect(
+            "https://" + os.environ.get("AUTH0_DOMAIN")
+            + "/v2/logout?"
+            + urlencode(
+                {
+                    "returnTo": url_for("index", _external=True),
+                    "client_id": os.environ.get("AUTH0_CLIENT_ID"),
+                },
+                quote_via=quote_plus,
+            )
+        )
+else:
+    # Auth not available: create a passthrough requires_auth so protected
+    # endpoints remain accessible during local development. Also expose
+    # informative login/logout endpoints.
+    def requires_auth(f):
+        @wraps(f)
+        def decorated(*args, **kwargs):
+            # No-op in dev when authlib/Auth0 not configured
+            return f(*args, **kwargs)
+        return decorated
+
+    @app.route('/login')
+    def login_not_configured():
+        return jsonify({"error": "Auth not configured. Install authlib and set AUTH0_DOMAIN/AUTH0_CLIENT_ID/AUTH0_CLIENT_SECRET in env."}), 501
+
+    @app.route('/callback')
+    def callback_not_configured():
+        return jsonify({"error": "Auth callback not available because auth is not configured."}), 501
+
+    @app.route('/logout')
+    def logout_not_configured():
+        return jsonify({"error": "Logout not available because auth is not configured."}), 501
 
 # Load local .env if python-dotenv is installed. This is optional and safe.
 if _HAVE_DOTENV:
