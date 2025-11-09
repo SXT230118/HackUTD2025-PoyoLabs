@@ -308,10 +308,11 @@
         
         // Helper function to determine which GIF to use based on fullness percentage
         function getCauldronGif(percent) {
-            if (percent <= 20) return '/static/twenty.gif';
-            if (percent <= 40) return '/static/fourty.gif';
-            if (percent <= 60) return '/static/sixty.gif';
-            if (percent <= 80) return '/static/eighty.gif';
+            if (percent <= 20) return '/static/ten.gif';
+            if (percent <= 40) return '/static/twenty.gif';
+            if (percent <= 55) return '/static/fourty.gif';
+            if (percent <= 70) return '/static/sixty.gif';
+            if (percent <= 85) return '/static/eighty.gif';
             return '/static/hundred.gif';
         }
         
