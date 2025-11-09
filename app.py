@@ -237,6 +237,38 @@ def auth_status():
         'auth0_client_secret_present': bool(os.environ.get('AUTH0_CLIENT_SECRET')),
         'secret_key_present': bool(os.environ.get('SECRET_KEY'))
     })
+
+
+@app.route('/api/user')
+def api_user():
+    """Return a lightweight user profile for the frontend (does not expose secrets).
+    Returns 401 when no user is logged in.
+    """
+    user = session.get('user')
+    if not user:
+        return jsonify({'error': 'not authenticated'}), 401
+
+    profile = {}
+    try:
+        # Common shapes: dev login stores a simple dict; authlib token may include 'userinfo'
+        if isinstance(user, dict):
+            if 'userinfo' in user and isinstance(user['userinfo'], dict):
+                profile.update(user['userinfo'])
+            # copy common top-level claims if present
+            for k in ('name', 'email', 'picture', 'sub'):
+                if k in user and user[k]:
+                    profile.setdefault(k, user[k])
+        # ensure minimal shape
+        out = {
+            'name': profile.get('name') or profile.get('nickname') or profile.get('email'),
+            'email': profile.get('email'),
+            'picture': profile.get('picture'),
+            'sub': profile.get('sub')
+        }
+        return jsonify(out)
+    except Exception as e:
+        print('[auth] Failed to serialize user profile:', e)
+        return jsonify({'error': 'internal error'}), 500
 # ### NEW: Define the EOG API Base URL ###
 EOG_API_BASE_URL = "https://hackutd2025.eog.systems" 
 
@@ -1679,4 +1711,6 @@ def api_optimizer_compute():
     })
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    # Bind explicitly to 'localhost' to match AUTH_CALLBACK_URL and
+    # avoid callback mismatches when testing locally (localhost vs 127.0.0.1).
+    app.run(host='localhost', debug=True, port=5000)
