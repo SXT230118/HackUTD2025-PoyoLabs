@@ -2297,43 +2297,27 @@ def tickets_match():
         calculated = None
         matched_events = []
         
-        # Look for drain events on the ticket date OR ±1 day (to handle timezone/timing issues)
+        # Match drain events ONLY on the exact ticket date (no ±1 day to avoid over-counting)
         if cauldron_id and match_day and cauldron_id in drains_by_cauldron_day:
-            # Parse match_day
-            try:
-                match_date = datetime.fromisoformat(match_day).date()
-                # Check current day and ±1 day
-                dates_to_check = [
-                    (match_date - timedelta(days=1)).isoformat(),
-                    match_day,
-                    (match_date + timedelta(days=1)).isoformat()
-                ]
-                
-                for check_day in dates_to_check:
-                    day_drains = drains_by_cauldron_day.get(cauldron_id, {}).get(check_day, [])
-                    matched_events.extend(day_drains)
-                
-                if matched_events:
-                    calculated = sum(d['drained'] for d in matched_events)
-            except Exception:
-                pass
+            # Get drains for exact date only
+            day_drains = drains_by_cauldron_day.get(cauldron_id, {}).get(match_day, [])
+            if day_drains:
+                matched_events = day_drains
+                calculated = sum(d['drained'] for d in matched_events)
 
         # If we couldn't compute from events, fallback to per-sample diff sum
         if calculated is None and cauldron_id:
             # try naive computation over series_map
             series = series_map.get(cauldron_id, [])
-            # sum all decreases within that calendar day ±1 day
+            # sum all decreases within the exact calendar day only
             if match_day:
                 try:
-                    match_date = datetime.fromisoformat(match_day).date()
                     s = 0.0
                     for i in range(len(series)-1):
                         a_ts, a_v = series[i]
                         b_ts, b_v = series[i+1]
-                        # Check if either timestamp is within ±1 day of match_day
-                        a_day = a_ts.date()
-                        b_day = b_ts.date()
-                        if abs((a_day - match_date).days) <= 1 and abs((b_day - match_date).days) <= 1:
+                        # Check if both timestamps are on the exact match_day
+                        if a_ts.date().isoformat() == match_day and b_ts.date().isoformat() == match_day:
                             if b_v < a_v:
                                 s += (a_v - b_v)
                     calculated = s if s > 0 else None
@@ -2346,15 +2330,15 @@ def tickets_match():
         reason = ''
         if amount is not None and calculated is not None:
             diff = round(amount - calculated, 2)
-            # Very lenient threshold: 20L AND >30% difference (both conditions must be true)
-            if abs(diff) > 20 and abs(diff) > 0.3 * max(1.0, amount):
+            # Reasonable threshold: 10L AND >15% difference (both conditions must be true)
+            if abs(diff) > 10 and abs(diff) > 0.15 * max(1.0, amount):
                 suspicious = True
-                reason = f'Difference {diff}L exceeds threshold (>20L and >30%).'
+                reason = f'Difference {diff}L exceeds threshold (>10L and >15%).'
             else:
                 reason = f'Match OK (diff: {diff}L)'
         elif amount is not None and calculated is None:
             # No drain event found - only suspicious if it's a large amount
-            if amount > 50:  # Only flag as suspicious if ticket is >50L
+            if amount > 30:  # Only flag as suspicious if ticket is >30L
                 suspicious = True
                 reason = f'No matching drain event found for {amount}L ticket.'
             else:
