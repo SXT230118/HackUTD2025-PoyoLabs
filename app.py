@@ -2479,8 +2479,8 @@ def tickets_match():
                 # Continue drain event even if there are small increases (fill_rate)
                 # But stop when level stops decreasing (stabilizes or increases significantly)
                 # Also limit drain duration AND amount to prevent merging multiple courier visits
-                MAX_DRAIN_DURATION_MIN = 15  # Split drains longer than 15 minutes
-                MAX_DRAIN_AMOUNT_L = 120  # Split if drained more than 120L (typical ticket is ~95L)
+                MAX_DRAIN_DURATION_MIN = 10  # Split drains longer than 10 minutes (was 15)
+                MAX_DRAIN_AMOUNT_L = 110  # Split if drained more than 110L (was 120L, typical ticket is ~95L)
                 consecutive_increases = 0
                 consecutive_stable = 0
                 while j < n:
