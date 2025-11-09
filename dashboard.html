@@ -5,17 +5,47 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Poyolabs - CauldronWatch</title>
     <style>
+        @import url('https://fonts.googleapis.com/css2?family=MedievalSharp&display=swap');
+        
+        /* Local/demo font: Longalberica - expects the file at /static/assets/Longalberica-DEMO.ttf */
+        @font-face {
+            font-family: 'Longalberica';
+            src: url('/static/assets/Longalberica-DEMO.ttf') format('truetype');
+            font-weight: normal;
+            font-style: normal;
+            font-display: swap;
+        }
+        
         /* Basic styles to make it look good for a hackathon */
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            background: #1a1a2e;
+            background: url('/static/background.gif') center/cover fixed;
             color: #e0e0e0;
             margin: 0;
             padding: 20px;
+            cursor: url('/static/cursor.cur'), default;
+            /* Fade in effect */
+            opacity: 0;
+            animation: fadeIn 1s ease-in forwards;
+        }
+        
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+            }
+            to {
+                opacity: 1;
+            }
         }
         h1 {
+            font-family: 'MedievalSharp', cursive;
             color: #f7b733; /* Potion gold */
             text-align: center;
+            background: rgb(41, 23, 40, 0.85);
+            padding: 20px;
+            border-radius: 0;
+            display: inline-block;
+            margin: 20px auto;
         }
         
         /* ========== NEW: User profile section ========== */
@@ -23,13 +53,13 @@
             position: fixed;
             top: 10px;
             right: 20px;
-            background: rgba(42, 42, 78, 0.9);
+            background: rgb(41, 23, 40, 0.9);
             padding: 10px 15px;
-            border-radius: 8px;
+            border-radius: 0;
             display: flex;
             align-items: center;
             gap: 10px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+            box-shadow: 0 2px 10px rgb(35, 20, 34, 0.3);
             z-index: 1000;
         }
 
@@ -50,7 +80,7 @@
             color: #fff;
             border: none;
             padding: 5px 12px;
-            border-radius: 4px;
+            border-radius: 0;
             cursor: pointer;
             font-size: 0.85rem;
             transition: background 0.3s;
@@ -67,14 +97,36 @@
             gap: 20px;
         }
         .dashboard, .agent-panel {
-            background: #2a2a4e;
-            border-radius: 8px;
+            background: rgb(41, 23, 40);
+            border-radius: 0;
             padding: 20px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+            box-shadow: 0 4px 15px rgb(35, 20, 34);
         }
         h2 {
+            font-family: 'MedievalSharp', cursive;
             border-bottom: 2px solid #f7b733;
             padding-bottom: 5px;
+            text-align: center;
+        }
+        h3 {
+            font-family: 'MedievalSharp', cursive;
+            text-align: center;
+        }
+
+        /* Cauldron fullness GIF styles */
+        .cauldron-gif-container {
+            margin-top: 6px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .cauldron-gif {
+            width: 100%;
+            max-width: 140px;
+            height: auto;
+            display: block;
+            image-rendering: auto;
+            border-radius: 0;
         }
         
         /* Cauldron Styles */
@@ -86,7 +138,7 @@
         .cauldron {
             background: #3a3a6e;
             padding: 10px;
-            border-radius: 5px;
+            border-radius: 0;
             text-align: center;
             /* Add transition for smooth border color changes */
             transition: border 0.5s ease;
@@ -102,19 +154,9 @@
         .cauldron.warning-90 { border: 2px solid #f39c12; }
         .cauldron.warning-75 { border: 2px solid #f1c40f; }
 
-        .cauldron-name { font-weight: bold; }
-        .level-bar-container {
-            background: #1a1a2e;
-            border-radius: 5px;
-            height: 20px;
-            overflow: hidden;
-            margin-top: 10px;
-        }
-        .level-bar {
-            height: 100%;
-            background: linear-gradient(90deg, #4facf7, #2ecc71);
-            width: 0%; /* Will be set by JS */
-            transition: width 0.5s ease;
+        .cauldron-name { 
+            font-family: 'Longalberica', serif;
+            font-weight: bold; 
         }
 
         /* Agent Chat Styles */
@@ -123,14 +165,24 @@
             overflow-y: auto;
             background: #1a1a2e;
             padding: 10px;
-            border-radius: 5px;
+            border-radius: 0;
             margin-bottom: 10px;
         }
         #chat-log div {
             margin-bottom: 8px;
         }
-        .chat-user { color: #82aaff; }
-        .chat-agent { color: #c3e88d; }
+        .chat-user { 
+            color: #82aaff;
+            background-color: #3d4968;
+            padding: 5px;
+            border-radius: 0;
+         }
+        .chat-agent { 
+            color: #3d4968;
+            background-color: #c3e88d; 
+            padding: 5px;
+            border-radius: 0;
+        }
         .chat-agent-plan {
             color: #888;
             font-style: italic;
@@ -142,7 +194,7 @@
             width: calc(100% - 10px);
             padding: 8px;
             border: none;
-            border-radius: 5px;
+            border-radius: 0;
             background: #3a3a6e;
             color: #fff;
         }
@@ -155,7 +207,7 @@
         .layout-btn {
             background: #22293b; 
             color: #fff; 
-            border-radius: 6px; 
+            border-radius: 0; 
             padding: 8px 14px; 
             border: 2px solid #2f3a55; 
             cursor: pointer; 
@@ -177,7 +229,7 @@
             background: #5a5f9e;
             color: #fff;
             border: none;
-            border-radius: 6px;
+            border-radius: 0;
             padding: 8px 12px;
             cursor: pointer;
             font-weight: 500;
@@ -198,18 +250,31 @@
     </div>
     <!-- ========== END NEW ========== -->
 
-    <h1>🔮 Poyolabs Factory Monitor</h1>
+    <div style="text-align:center;">
+        <h1>
+            <img src="/static/potion.png" alt="Potion" style="width:48px;height:48px;vertical-align:middle;margin-right:12px;">
+            Poyolabs Factory Monitor
+            <img src="/static/potion.png" alt="Potion" style="width:48px;height:48px;vertical-align:middle;margin-left:12px;">
+        </h1>
+    </div>
 
     <div class="container">
         <div class="dashboard">
-            <h2>CauldronWatch Dashboard</h2>
+            <h2>Cauldron Dashboard</h2>
             <div style="display:flex;gap:16px;align-items:flex-start">
                 <div style="flex:2;min-width:0">
                     <div id="cauldron-grid"></div>
                 </div>
                 <div style="flex:1;min-width:400px;max-width:550px">
                     <h3>Network Map</h3>
-                    <div id="network-map" style="background:#111229;padding:12px;border-radius:6px;height:420px;overflow:hidden;position:relative"></div>
+                    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+                        <div>
+                            <button id="layout-radial" class="layout-btn active">Radial</button>
+                            <button id="layout-force" class="layout-btn">Force</button>
+                        </div>
+                        <div style="color:#c8d0e0;font-size:13px">Layout:</div>
+                    </div>
+                    <div id="network-map" style="background:#111229;padding:12px;border-radius:0;height:420px;overflow:hidden;position:relative"></div>
                     <h3 style="margin-top:12px">Historic Playback</h3>
                     <div>
                         <label>Date: <input type="date" id="play-date"></label>
@@ -222,19 +287,15 @@
                         <button id="reset-drains" style="margin-left:8px;background:#e74c3c;border-color:#c0392b" title="Clear all active drains">Reset Drains</button>
                         <button id="export-suspicious" style="margin-left:8px;display:none">Export Suspicious</button>
                     </div>
-                    <div id="match-results" style="margin-top:8px;max-height:300px;overflow:auto;background:#0f1220;padding:8px;border-radius:6px;color:#ddd"></div>
+                    <div id="match-results" style="margin-top:8px;max-height:300px;overflow:auto;background:#0f1220;padding:8px;border-radius:0;color:#ddd"></div>
                 </div>
             </div>
         </div>
 
         <div class="agent-panel">
-            <h2>Poyolabs Agent</h2>
-            <div id="agent-insights" style="margin-bottom:12px;padding:8px;background:rgba(255,255,255,0.03);border-radius:6px;display:none">
-                <div style="font-weight:bold;margin-bottom:6px;color:#9ad18a">🤖 Proactive Insights</div>
-                <div id="insights-container" style="font-size:0.9em;color:#ddd"></div>
-            </div>
+            <h2>Poyo Pal</h2>
             <div id="chat-log">
-                <div class="chat-agent">Welcome, Manager. I am monitoring the factory and will alert you to any issues.</div>
+                <div class="chat-agent">🤖 Welcome, Manager. I am monitoring the factory and will alert you to any issues.</div>
             </div>
             <form id="chat-form">
                 <input type="text" id="chat-input" placeholder="Ask your agent..." autocomplete="off">
@@ -271,6 +332,17 @@
         const chatLog = document.getElementById('chat-log');
         const chatForm = document.getElementById('chat-form');
         const chatInput = document.getElementById('chat-input');
+        
+        // Map a percent full to the appropriate GIF from /static
+        function getCauldronGif(percent) {
+            const p = Math.max(0, Math.min(100, Number(percent || 0)));
+            if (p <= 20) return '/static/ten.gif';
+            if (p <= 40) return '/static/twenty.gif';
+            if (p <= 55) return '/static/fourty.gif';
+            if (p <= 70) return '/static/sixty.gif';
+            if (p <= 85) return '/static/eighty.gif';
+            return '/static/hundred.gif';
+        }
         
         // --- 1. EOG: Render the Cauldron Dashboard ---
         
@@ -315,8 +387,8 @@
                             <div class="cauldron-name">${data.name}</div>
                             <div class="cauldron-percent">${percent.toFixed(1)}% Full</div>
                             <small class="cauldron-volume">(${currentLevel.toFixed(0)}L / ${maxVolume}L)</small>
-                            <div class="level-bar-container">
-                                <div class="level-bar" style="width: ${percent}%"></div>
+                            <div class="cauldron-gif-container">
+                                <img class="cauldron-gif" src="${getCauldronGif(percent)}" alt="Cauldron fullness">
                             </div>
                             <div style="margin-top:8px;font-size:0.9em;color:#ddd">Time to full: <strong class="time-to-fill">—</strong></div>
                             <div class="discrepancy-badge" style="display:none;margin-top:4px;font-size:0.8em;color:#ff6b6b;font-weight:bold;">⚠ Discrepancy</div>
@@ -333,13 +405,16 @@
                         } else {
                             cauldronEl.style.border = '';
                         }
-                        // update texts and bar
+                        // update texts and gif
                         const pctEl = cauldronEl.querySelector('.cauldron-percent');
                         const volEl = cauldronEl.querySelector('.cauldron-volume');
-                        const bar = cauldronEl.querySelector('.level-bar');
+                        const gifEl = cauldronEl.querySelector('.cauldron-gif');
                         if (pctEl) pctEl.textContent = `${percent.toFixed(1)}% Full`;
                         if (volEl) volEl.textContent = `(${currentLevel.toFixed(0)}L / ${maxVolume}L)`;
-                        if (bar) bar.style.width = `${percent}%`;
+                        if (gifEl) {
+                            const newSrc = getCauldronGif(percent);
+                            if (gifEl.getAttribute('src') !== newSrc) gifEl.setAttribute('src', newSrc);
+                        }
                         
                         // show discrepancy badge if marked
                         const badge = cauldronEl.querySelector('.discrepancy-badge');
@@ -357,12 +432,11 @@
                             if (drainPercent) drainPercent.textContent = `${data.drain_progress}%`;
                             // Add blue glow to draining cauldrons
                             cauldronEl.style.boxShadow = '0 0 15px rgba(79, 172, 247, 0.6)';
-                            // Make level bar blue while draining
-                            if (bar) bar.style.background = 'linear-gradient(to right, #4facf7, #2ecc71)';
+                            // Blue glow is handled on container; gif does not change color
                         } else {
                             if (drainStatus) drainStatus.style.display = 'none';
                             cauldronEl.style.boxShadow = '';
-                            if (bar) bar.style.background = '';
+                            // nothing to reset for gif
                         }
                     }
 
@@ -426,9 +500,12 @@
                     if (s.percentPerSec && s.initialTotalSeconds) {
                         const elapsed = Math.max(0, s.initialTotalSeconds - remaining);
                         const newPercent = Math.min(100, (s.startPercent || 0) + (s.percentPerSec * elapsed));
-                        const bar = el.querySelector('.level-bar');
+                        const gifEl = el.querySelector('.cauldron-gif');
                         const pctEl = el.querySelector('.cauldron-percent');
-                        if (bar) bar.style.width = `${newPercent}%`;
+                        if (gifEl) {
+                            const newSrc = getCauldronGif(newPercent);
+                            if (gifEl.getAttribute('src') !== newSrc) gifEl.setAttribute('src', newSrc);
+                        }
                         if (pctEl) pctEl.textContent = `${newPercent.toFixed(1)}% Full`;
                         s.currentPercent = newPercent;
                     }
@@ -484,7 +561,7 @@
             const messageEl = document.createElement('div');
             if (sender === 'user') {
                 messageEl.className = 'chat-user';
-                messageEl.textContent = `> ${message}`;
+                messageEl.textContent = `👩‍💻 ${message}`;
             } else if (sender === 'agent') {
                 messageEl.className = 'chat-agent';
                 messageEl.textContent = `🤖 ${message}`;
@@ -836,7 +913,7 @@
                 // Show playback indicator
                 const playIndicator = document.createElement('div');
                 playIndicator.id = 'playback-indicator';
-                playIndicator.style.cssText = 'position:fixed;top:10px;right:10px;background:#4facf7;color:#fff;padding:8px 16px;border-radius:4px;z-index:1000;font-weight:bold;';
+                playIndicator.style.cssText = 'position:fixed;top:10px;right:10px;background:#4facf7;color:#fff;padding:8px 16px;border-radius:0;z-index:1000;font-weight:bold;';
                 playIndicator.textContent = `▶ Playing ${dateStr} (0/${samples.length})`;
                 document.body.appendChild(playIndicator);
 
@@ -880,7 +957,7 @@
                                     <div class="cauldron-name">${data.name}</div>
                                     <div class="cauldron-percent">${data.percent_full.toFixed(1)}% Full</div>
                                     <small class="cauldron-volume">(${(data.current_level||0).toFixed(0)}L / ${data.max_volume}L)</small>
-                                    <div class="level-bar-container"><div class="level-bar" style="width:${data.percent_full}%"></div></div>
+                                    <div class="cauldron-gif-container"><img class="cauldron-gif" src="${getCauldronGif(data.percent_full)}" alt="Cauldron fullness"></div>
                                     <div style="margin-top:8px;font-size:0.9em;color:#ddd">Time to full: <strong class="time-to-fill">—</strong></div>
                                 `;
                                 cauldronGrid.appendChild(cauldronEl);
@@ -889,10 +966,13 @@
                                 if (data.anomaly) cauldronEl.classList.add('anomaly'); else cauldronEl.classList.remove('anomaly');
                                 const pctEl = cauldronEl.querySelector('.cauldron-percent');
                                 const volEl = cauldronEl.querySelector('.cauldron-volume');
-                                const bar = cauldronEl.querySelector('.level-bar');
+                                const gifEl = cauldronEl.querySelector('.cauldron-gif');
                                 if (pctEl) pctEl.textContent = `${data.percent_full.toFixed(1)}% Full`;
                                 if (volEl) volEl.textContent = `(${(data.current_level||0).toFixed(0)}L / ${data.max_volume}L)`;
-                                if (bar) bar.style.width = `${data.percent_full}%`;
+                                if (gifEl) {
+                                    const newSrc = getCauldronGif(data.percent_full);
+                                    if (gifEl.getAttribute('src') !== newSrc) gifEl.setAttribute('src', newSrc);
+                                }
                             }
                             // ensure playback doesn't show stale fullAt-based timers
                             const state = window._cauldronState = window._cauldronState || {};
