@@ -1487,11 +1487,11 @@ def loading():
     Allows demo mode without authentication, but requires auth for normal mode."""
     # Allow demo mode without auth
     if request.args.get('demo') == '1':
-        return render_template('loading.html')
+        return send_from_directory(app.root_path, 'loading.html')
     # Normal mode requires authentication
     if 'user' not in session:
         return redirect(url_for('login'))
-    return render_template('loading.html')
+    return send_from_directory(app.root_path, 'loading.html')
 
 @app.route('/dashboard')
 @requires_auth
