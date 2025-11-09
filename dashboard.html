@@ -248,30 +248,7 @@
     <div class="container">
         <div class="dashboard">
             <h2>Cauldron Dashboard</h2>
-            <div style="display:flex;gap:16px;align-items:flex-start">
-                <div style="flex:2;min-width:0">
-                    <div id="cauldron-grid"></div>
-                </div>
-                <div style="flex:1;min-width:400px;max-width:550px">
-                    <h3>Network Map</h3>
-                    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
-                    </div>
-                    <div id="network-map" style="background:#111229;padding:12px;border-radius:0;height:420px;overflow:hidden;position:relative"></div>
-                    <h3 style="margin-top:12px">Historic Playback</h3>
-                    <div>
-                        <label>Date: <input type="date" id="play-date"></label>
-                        <button id="play-btn">Play</button>
-                        <button id="stop-btn">Stop</button>
-                    </div>
-                    <div style="margin-top:8px">
-                        <button id="run-match">Run Ticket Matching</button>
-                        <button id="optimize-routes" style="margin-left:8px">Optimize Routes</button>
-                        <button id="reset-drains" style="margin-left:8px;background:#e74c3c;border-color:#c0392b" title="Clear all active drains">Reset Drains</button>
-                        <button id="export-suspicious" style="margin-left:8px;display:none">Export Suspicious</button>
-                    </div>
-                    <div id="match-results" style="margin-top:8px;max-height:300px;overflow:auto;background:#0f1220;padding:8px;border-radius:0;color:#ddd"></div>
-                </div>
-            </div>
+            <div id="cauldron-grid"></div>
         </div>
 
         <div class="agent-panel">
@@ -282,6 +259,23 @@
             <form id="chat-form">
                 <input type="text" id="chat-input" placeholder="Ask your agent..." autocomplete="off">
             </form>
+            <!-- Moved Network Map and related controls beneath chatbot window -->
+            <h2 style="margin-top:24px;">Network Map</h2>
+            <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;"></div>
+            <div id="network-map" style="background:#111229;padding:12px;border-radius:0;height:420px;overflow:hidden;position:relative"></div>
+            <h3 style="margin-top:12px">Historic Playback</h3>
+            <div>
+                <label>Date: <input type="date" id="play-date"></label>
+                <button id="play-btn">Play</button>
+                <button id="stop-btn">Stop</button>
+            </div>
+            <div style="margin-top:8px">
+                <button id="run-match">Run Ticket Matching</button>
+                <button id="optimize-routes" style="margin-left:8px">Optimize Routes</button>
+                <button id="reset-drains" style="margin-left:8px;background:#e74c3c;border-color:#c0392b" title="Clear all active drains">Reset Drains</button>
+                <button id="export-suspicious" style="margin-left:8px;display:none">Export Suspicious</button>
+            </div>
+            <div id="match-results" style="margin-top:8px;max-height:300px;overflow:auto;background:#0f1220;padding:8px;border-radius:0;color:#ddd"></div>
         </div>
     </div>
 
