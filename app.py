@@ -173,11 +173,12 @@ class AgentWorkflow:
             return {'error': str(e)}
     
     def _resolve_tickets_for_cauldron(self, cauldron_id):
-        """Resolve all tickets for a specific cauldron by calling PUT /api/Tickets/{id}"""
+        """Resolve all tickets for a specific cauldron by calling the API"""
         try:
             # Get all unresolved tickets for this cauldron
             tickets_raw = safe_get(EOG_API_BASE_URL + '/api/Tickets')
             if not tickets_raw:
+                print(f"[RESOLVE] Could not fetch tickets for {cauldron_id}")
                 return
             
             tickets_list = tickets_raw if isinstance(tickets_raw, list) else (
@@ -191,21 +192,43 @@ class AgentWorkflow:
                 status = (ticket.get('status') or '').lower()
                 
                 # Only resolve tickets for this cauldron that aren't already resolved
-                if ticket_cauldron == cauldron_id and status not in ['resolved', 'completed']:
+                if ticket_cauldron == cauldron_id and status not in ['resolved', 'completed', 'done']:
                     try:
-                        # Call PUT endpoint to resolve the ticket
+                        # Try multiple API methods to resolve the ticket
                         url = f"{EOG_API_BASE_URL}/api/Tickets/{ticket_id}"
-                        response = requests.put(url, json={'status': 'resolved'}, timeout=5)
-                        if response.status_code == 200:
+                        
+                        # Try PUT first
+                        response = requests.put(url, json={'status': 'resolved'}, timeout=5, verify=False)
+                        if response.status_code in [200, 201, 204]:
                             resolved_count += 1
-                            print(f"[RESOLVE] Resolved ticket {ticket_id} for {cauldron_id}")
-                        else:
-                            print(f"[RESOLVE] Failed to resolve {ticket_id}: HTTP {response.status_code}")
+                            print(f"[RESOLVE] ✓ PUT resolved ticket {ticket_id} for {cauldron_id}")
+                            continue
+                        
+                        # Try PATCH
+                        response = requests.patch(url, json={'status': 'resolved'}, timeout=5, verify=False)
+                        if response.status_code in [200, 201, 204]:
+                            resolved_count += 1
+                            print(f"[RESOLVE] ✓ PATCH resolved ticket {ticket_id} for {cauldron_id}")
+                            continue
+                        
+                        # Try POST to a resolve endpoint
+                        resolve_url = f"{EOG_API_BASE_URL}/api/Tickets/{ticket_id}/resolve"
+                        response = requests.post(resolve_url, timeout=5, verify=False)
+                        if response.status_code in [200, 201, 204]:
+                            resolved_count += 1
+                            print(f"[RESOLVE] ✓ POST resolved ticket {ticket_id} for {cauldron_id}")
+                            continue
+                        
+                        print(f"[RESOLVE] ✗ Could not resolve {ticket_id}: tried PUT/PATCH/POST, last status {response.status_code}")
+                        print(f"[RESOLVE]   Response: {response.text[:200]}")
+                        
                     except Exception as e:
-                        print(f"[RESOLVE] Error resolving {ticket_id}: {e}")
+                        print(f"[RESOLVE] ✗ Error resolving {ticket_id}: {e}")
             
             if resolved_count > 0:
-                print(f"[RESOLVE] Resolved {resolved_count} ticket(s) for {cauldron_id}")
+                print(f"[RESOLVE] ✅ Resolved {resolved_count} ticket(s) for {cauldron_id}")
+            else:
+                print(f"[RESOLVE] No tickets needed resolution for {cauldron_id}")
                 
         except Exception as e:
             print(f"[RESOLVE] Error in _resolve_tickets_for_cauldron: {e}")
@@ -2290,15 +2313,26 @@ def tickets_match():
                 
                 # Continue drain event even if there are small increases (fill_rate)
                 # But stop when level stops decreasing (stabilizes or increases significantly)
+                # Also limit drain duration AND amount to prevent merging multiple courier visits
+                MAX_DRAIN_DURATION_MIN = 15  # Split drains longer than 15 minutes
+                MAX_DRAIN_AMOUNT_L = 120  # Split if drained more than 120L (typical ticket is ~95L)
                 consecutive_increases = 0
                 consecutive_stable = 0
                 while j < n:
                     prev_v = series[j-1][1]
                     curr_v = series[j][1]
+                    curr_t = series[j][0]
+                    
+                    # Check if drain has been going on too long OR drained too much
+                    duration_so_far = (curr_t - start_t).total_seconds() / 60.0
+                    drained_so_far = start_v - curr_v
+                    if duration_so_far > MAX_DRAIN_DURATION_MIN or drained_so_far > MAX_DRAIN_AMOUNT_L:
+                        # Split here - this is likely a separate drain event
+                        break
                     
                     # If actively decreasing, continue
                     if curr_v < prev_v - 0.5:  # Decreasing by >0.5L
-                        end_t = series[j][0]
+                        end_t = curr_t
                         end_v = curr_v
                         consecutive_increases = 0
                         consecutive_stable = 0
