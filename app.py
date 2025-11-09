@@ -1904,6 +1904,69 @@ def cauldron_status():
     return jsonify(status_list)
 
 
+@app.route('/api/couriers/dispatch-bulk', methods=['POST'])
+@requires_auth
+def dispatch_couriers_bulk():
+    """Dispatch couriers to multiple cauldrons at once based on fill threshold"""
+    data = request.get_json() or {}
+    threshold_percent = data.get('threshold_percent', 50)  # Default 50%
+    
+    try:
+        # Get current cauldron status
+        status_response = cauldron_status()
+        if status_response.status_code != 200:
+            return jsonify({'error': 'Could not fetch cauldron status'}), 500
+        
+        cauldrons = status_response.get_json()
+        
+        # Find cauldrons above threshold
+        dispatched = []
+        failed = []
+        already_draining = []
+        
+        agent = AgentWorkflow()
+        
+        for c in cauldrons:
+            cauldron_id = c.get('id')
+            percent = c.get('percent_full', 0)
+            is_draining = c.get('is_draining', False)
+            
+            if percent >= threshold_percent:
+                if is_draining:
+                    already_draining.append({
+                        'id': cauldron_id,
+                        'name': c.get('name'),
+                        'percent': percent
+                    })
+                else:
+                    # Dispatch courier
+                    result = agent._dispatch_courier(cauldron_id)
+                    if result.get('status') == 'success':
+                        dispatched.append({
+                            'id': cauldron_id,
+                            'name': c.get('name'),
+                            'percent': percent,
+                            'current_level': c.get('current_level')
+                        })
+                    else:
+                        failed.append({
+                            'id': cauldron_id,
+                            'name': c.get('name'),
+                            'error': result.get('error', 'Unknown error')
+                        })
+        
+        return jsonify({
+            'threshold_percent': threshold_percent,
+            'dispatched': dispatched,
+            'already_draining': already_draining,
+            'failed': failed,
+            'summary': f"Dispatched {len(dispatched)} courier(s), {len(already_draining)} already draining, {len(failed)} failed"
+        })
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/debug/drains')
 @requires_auth
 def debug_drains():
