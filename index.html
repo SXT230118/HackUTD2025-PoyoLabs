@@ -50,14 +50,14 @@
             position: relative; /* To appear above the background */
             background: rgba(90, 51, 24, 0.88); /* darker door brown tint */
             backdrop-filter: blur(3px);
-            /* Restore previous padding to undo widening */
-            padding: 40px 44px 30px;
+            /* Smaller padding to reduce size */
+            padding: 34px 38px 26px;
             /* Semi-elliptical shape: large radius at top, straight at bottom */
             border-radius: 160px 160px 0 0;
             box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
             border: 1px solid rgba(170,120,60,0.55); /* adjust border to harmonize with darker brown */
-            /* Keep position but undo scale-based widening */
-            transform: translateY(-32px) scale(0.90);
+            /* Reduce negative translateY to move semiellipse down slightly more */
+            transform: translateY(-15px) scale(0.85);
             transform-origin: center center;
             /* Ensure bottom alignment with the door */
             margin-top: auto;
