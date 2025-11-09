@@ -379,32 +379,26 @@
                     if (serverFullAt) {
                         const nowAdj = Date.now() + (window._serverClockOffsetMs || 0);
                         if (!prev.fullAt) {
-                            // first time seeing this cauldron
+                            // first time seeing this cauldron - set and lock it
                             prev.fullAt = serverFullAt;
                             prev.initialTotalSeconds = Math.max(1, Math.round((prev.fullAt - nowAdj)/1000));
                             prev.startPercent = percent;
                             prev.currentPercent = percent;
                         } else {
                             const delta = serverFullAt - prev.fullAt;
-                            // Only update if delta is significant (> 5 seconds tolerance to prevent micro-resets from calculation variance)
-                            if (Math.abs(delta) > 5000) {
-                                if (delta <= -5000) {
-                                    // significant decrease: accept immediately
-                                    prev.fullAt = serverFullAt;
-                                    prev.initialTotalSeconds = Math.max(1, Math.round((prev.fullAt - nowAdj)/1000));
-                                    prev.startPercent = percent;
-                                    prev.currentPercent = percent;
-                                } else if (delta > 5000) {
-                                    // increase: allow only a small step to avoid jumping backwards
-                                    const maxIncreaseMs = 10000; // allow up to 10s increase per poll
-                                    const allowed = Math.min(delta, maxIncreaseMs);
-                                    prev.fullAt = prev.fullAt + allowed;
-                                    prev.initialTotalSeconds = Math.max(1, Math.round((prev.fullAt - nowAdj)/1000));
-                                    // keep continuity by using currentPercent as starting point
-                                    prev.startPercent = prev.currentPercent || percent;
-                                }
+                            // ONLY update fullAt if there's a MAJOR change indicating a real event
+                            // (like a drain starting, or cauldron being refilled)
+                            // Check if percent changed significantly (>5%) - indicates real change
+                            const percentDelta = Math.abs(percent - (prev.currentPercent || percent));
+                            
+                            if (percentDelta > 5) {
+                                // Significant level change detected - accept new fullAt
+                                prev.fullAt = serverFullAt;
+                                prev.initialTotalSeconds = Math.max(1, Math.round((prev.fullAt - nowAdj)/1000));
+                                prev.startPercent = percent;
+                                prev.currentPercent = percent;
                             }
-                            // else: delta is within ±5s, ignore it—let countdown continue smoothly
+                            // Otherwise, ignore server fullAt changes - let client countdown run smoothly
                         }
                     }
                     prev.percentPerSec = percentPerSec;
