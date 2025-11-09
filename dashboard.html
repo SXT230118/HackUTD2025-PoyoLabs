@@ -63,7 +63,7 @@
         
         .container {
             display: grid;
-            grid-template-columns: 2fr 1fr;
+            grid-template-columns: 1fr 1fr;
             gap: 20px;
         }
         .dashboard, .agent-panel {
@@ -72,6 +72,12 @@
             padding: 20px;
             box-shadow: 0 4px 15px rgba(0,0,0,0.3);
         }
+        .network-section {
+        background: #2a2a4e;
+        border-radius: 8px;
+        padding: 20px;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+    }
         h2 {
             border-bottom: 2px solid #f7b733;
             padding-bottom: 5px;
@@ -82,6 +88,9 @@
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
             gap: 15px;
+            background: url('static/assets/background_img.gif') center/cover no-repeat;
+            padding: 20px;
+            border-radius: 8px;
         }
         .cauldron {
             background: #3a3a6e;
@@ -186,6 +195,130 @@
         button:hover {
             background: #6d73b0;
         }
+
+        @keyframes route-pulse {
+            0%, 100% { opacity: 0.8; }
+            50% { opacity: 1; }
+        }
+
+        .route polyline {
+            stroke-dasharray: 8, 4;
+            animation: route-pulse 2s ease-in-out infinite;
+        }
+
+        /* Floating chat button and modal styles */
+        .chat-fab {
+            position: fixed;
+            right: 20px;
+            bottom: 20px;
+            width: 56px;
+            height: 56px;
+            border-radius: 28px;
+            background: #f7b733;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+            cursor: pointer;
+            z-index: 1600;
+            transition: transform 0.12s ease, box-shadow 0.12s ease;
+            animation: chat-fab-bob 3.2s ease-in-out infinite;
+            font-size: 28px;
+        }
+
+        .chat-fab:hover { 
+            transform: translateY(-4px) scale(1.02); 
+        }
+
+        .chat-fab.active { 
+            transform: scale(0.96); 
+            box-shadow: 0 6px 18px rgba(0,0,0,0.45); 
+        }
+
+        @keyframes chat-fab-bob { 
+            0% { transform: translateY(0); } 
+            50% { transform: translateY(-4px); } 
+            100% { transform: translateY(0); } 
+        }
+
+        .chat-modal {
+            position: fixed;
+            right: 20px;
+            bottom: 90px;
+            width: 380px;
+            max-height: 72vh;
+            z-index: 1599;
+            opacity: 0;
+            transform: translateY(12px) scale(0.98);
+            pointer-events: none;
+            transition: opacity 180ms ease, transform 220ms cubic-bezier(.2,.9,.2,1);
+        }
+
+        .chat-modal.open {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+            pointer-events: auto;
+        }
+
+        .chat-modal .agent-panel {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            padding: 0;
+            background: linear-gradient(180deg,#222235,#2a2a4e);
+            border-radius: 8px;
+            box-shadow: 0 14px 40px rgba(0,0,0,0.55);
+            overflow: scroll;
+        }
+
+        .chat-modal .agent-panel h2 { 
+            margin: 0; 
+            padding: 10px 12px; 
+            border-bottom: none; 
+        }
+
+        .chat-modal .chat-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 12px;
+            background: #1b1b2f;
+            color: #f7b733;
+            border-bottom: 1px solid rgba(255,255,255,0.03);
+        }
+
+        .chat-modal .chat-close {
+            background: transparent;
+            border: none;
+            color: #f7b733;
+            font-size: 18px;
+            cursor: pointer;
+        }
+
+        .chat-modal #chat-log { 
+            height: calc(72vh - 120px); 
+            overflow-y: auto;
+            overflow-x: hidden;
+            flex: 1;
+            word-wrap: break-word;
+        }
+        .chat-modal #chat-log div {
+            max-width: 100%;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+        }
+
+        .chat-modal form { 
+            padding: 10px; 
+            background: linear-gradient(180deg,#171725,#222235); 
+        }
+
+        /* Hide the inline agent-panel in main layout */
+        .container .agent-panel { 
+            display: none; 
+        }
+
     </style>
 </head>
 <body>
@@ -201,49 +334,61 @@
     <h1>🔮 Poyolabs Factory Monitor</h1>
 
     <div class="container">
+        <!-- Main dashboard: Cauldrons only -->
         <div class="dashboard">
             <h2>CauldronWatch Dashboard</h2>
-            <div style="display:flex;gap:16px;align-items:flex-start">
-                <div style="flex:2;min-width:0">
-                    <div id="cauldron-grid"></div>
-                </div>
-                <div style="flex:1;min-width:400px;max-width:550px">
-                    <h3>Network Map</h3>
-                    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
-                        <div>
-                            <button id="layout-radial" class="layout-btn active">Radial</button>
-                            <button id="layout-force" class="layout-btn">Force</button>
-                        </div>
-                        <div style="color:#c8d0e0;font-size:13px">Layout:</div>
-                    </div>
-                    <div id="network-map" style="background:#111229;padding:12px;border-radius:6px;height:420px;overflow:hidden;position:relative"></div>
-                    <h3 style="margin-top:12px">Historic Playback</h3>
-                    <div>
-                        <label>Date: <input type="date" id="play-date"></label>
-                        <button id="play-btn">Play</button>
-                        <button id="stop-btn">Stop</button>
-                    </div>
-                    <div style="margin-top:8px">
-                        <button id="run-match">Run Ticket Matching</button>
-                        <button id="optimize-routes" style="margin-left:8px">Optimize Routes</button>
-                        <button id="export-suspicious" style="margin-left:8px;display:none">Export Suspicious</button>
-                    </div>
-                    <div id="match-results" style="margin-top:8px;max-height:300px;overflow:auto;background:#0f1220;padding:8px;border-radius:6px;color:#ddd"></div>
-                </div>
-            </div>
+            <div id="cauldron-grid"></div>
         </div>
+        <!-- Top right: Network Map and Controls -->
+        <div class="network-section">
+            <h2>Network Map & Controls</h2>
+            <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+                <div>
+                    <button id="layout-radial" class="layout-btn active">Radial</button>
+                    <button id="layout-force" class="layout-btn">Force</button>
+                </div>
+                <div style="color:#c8d0e0;font-size:13px">Layout:</div>
+            </div>
+            <div id="network-map" style="background:#111229;padding:12px;border-radius:6px;height:420px;overflow:hidden;position:relative"></div>
+            
+            <h3 style="margin-top:12px">Historic Playback</h3>
+            <div>
+                <label>Date: <input type="date" id="play-date"></label>
+                <button id="play-btn">Play</button>
+                <button id="stop-btn">Stop</button>
+            </div>
+            <div style="margin-top:8px">
+                <button id="run-match">Run Ticket Matching</button>
+                <button id="optimize-routes" style="margin-left:8px">Optimize Routes</button>
+                <button id="export-suspicious" style="margin-left:8px;display:none">Export Suspicious</button>
+            </div>
+            <div id="match-results" style="margin-top:8px;max-height:300px;overflow:auto;background:#0f1220;padding:8px;border-radius:6px;color:#ddd"></div>
+        </div>
+    </div>
 
-        <div class="agent-panel">
-            <h2>Poyolabs Agent</h2>
-            <div id="agent-insights" style="margin-bottom:12px;padding:8px;background:rgba(255,255,255,0.03);border-radius:6px;display:none">
+    <!-- Floating chat button and modal -->
+    <div class="chat-fab" id="chat-fab" title="Open Assistant">
+        <img src="static\assets\Chat_Bot_Button_img.png" alt="Assistant" style="width:32px;height:32px;object-fit:fill;border-radius:50%;">
+    </div>
+    
+    <div class="chat-modal" id="chat-modal" aria-hidden="true">
+        <div class="agent-panel" role="dialog" aria-label="Poyolabs Assistant">
+            <div class="chat-header">
+                <h2>Poyolabs Assistant</h2>
+                <button class="chat-close" id="chat-close" aria-label="Close">✕</button>
+            </div>
+            
+            <div id="agent-insights" style="margin:12px;padding:8px;background:rgba(255,255,255,0.03);border-radius:6px;display:none">
                 <div style="font-weight:bold;margin-bottom:6px;color:#9ad18a">🤖 Proactive Insights</div>
                 <div id="insights-container" style="font-size:0.9em;color:#ddd"></div>
             </div>
+            
             <div id="chat-log">
-                <div class="chat-agent">Welcome, Manager. I am monitoring the factory and will alert you to any issues.</div>
+                <div class="chat-agent">🤖 Welcome, Manager. I am monitoring the factory and will alert you to any issues.</div>
             </div>
+            
             <form id="chat-form">
-                <input type="text" id="chat-input" placeholder="Ask your agent..." autocomplete="off">
+                <input type="text" id="chat-input" placeholder="Ask your agent..." autocomplete="off" style="width:calc(100%-20px)">
             </form>
         </div>
     </div>
@@ -279,6 +424,42 @@
         const chatForm = document.getElementById('chat-form');
         const chatInput = document.getElementById('chat-input');
         
+        // Chat widget toggle (floating FAB)
+        const chatFab = document.getElementById('chat-fab');
+        const chatModal = document.getElementById('chat-modal');
+        const chatClose = document.getElementById('chat-close');
+
+        function openChat() {
+            chatModal.classList.add('open');
+            chatModal.setAttribute('aria-hidden', 'false');
+            if (chatFab) chatFab.classList.add('active');
+            setTimeout(() => { try { chatInput.focus(); } catch (e) {} }, 160);
+        }
+
+        function closeChat() {
+            chatModal.classList.remove('open');
+            chatModal.setAttribute('aria-hidden', 'true');
+            if (chatFab) chatFab.classList.remove('active');
+        }
+
+        if (chatFab) chatFab.addEventListener('click', () => {
+            if (chatModal.classList.contains('open')) closeChat(); else openChat();
+        });
+        if (chatClose) chatClose.addEventListener('click', closeChat);
+
+        // Close on Escape
+        document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeChat(); });
+
+        // Click outside to close
+        document.addEventListener('click', (ev) => {
+            try {
+                if (!chatModal.classList.contains('open')) return;
+                const target = ev.target;
+                if (chatModal.contains(target) || (chatFab && chatFab.contains(target))) return;
+                closeChat();
+            } catch (e) {}
+        });
+
         // --- 1. EOG: Render the Cauldron Dashboard ---
         
         async function updateCauldronLevels() {
@@ -371,6 +552,20 @@
                             cauldronEl.style.boxShadow = '';
                             if (bar) bar.style.background = '';
                         }
+                    }
+
+                    // After the drain status section, add unlogged drain detection
+                    const unloggedBadge = cauldronEl.querySelector('.unlogged-badge');
+                    if (data.has_unlogged_drain) {
+                        if (!unloggedBadge) {
+                            const badge = document.createElement('div');
+                            badge.className = 'unlogged-badge';
+                            badge.style.cssText = 'display:block;margin-top:4px;font-size:0.8em;color:#ffa726;font-weight:bold;';
+                            badge.innerHTML = '⚠️ Unlogged Drain';
+                            cauldronEl.appendChild(badge);
+                        }
+                    } else if (unloggedBadge) {
+                        unloggedBadge.remove();
                     }
 
                     // initialize or update per-cauldron state but avoid resetting fullAt unless meaningful change
@@ -760,8 +955,9 @@
                 
                 // Ensure we have valid dimensions
                 if (w <= 0 || h <= 0) {
-                    console.error('Invalid dimensions for force layout:', w, h);
-                    return;
+                    console.warn('Invalid dimensions, using defaults');
+                    w = 800;  // ✅ Fallback dimensions
+                    h = 400;
                 }
                 
                 const cauldrons = (data && data.cauldrons) || [];
@@ -992,6 +1188,9 @@
                     path.setAttribute('stroke', colors[i % colors.length]);
                     path.setAttribute('stroke-width','3');
                     path.setAttribute('opacity','0.9');
+                    path.setAttribute('opacity','0.9');
+                    path.setAttribute('stroke-width','4');  // Thicker
+                    path.setAttribute('stroke-dasharray', '8,4');  // Dashed line
                     routeGroup.appendChild(path);
 
                     const label = document.createElementNS('http://www.w3.org/2000/svg','text');

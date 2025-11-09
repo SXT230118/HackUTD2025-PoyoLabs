@@ -1223,7 +1223,11 @@ def _parse_timestamp(ts_str):
         # Handle trailing Z
         if ts_str.endswith('Z'):
             ts_str = ts_str[:-1] + '+00:00'
-        return datetime.fromisoformat(ts_str)
+        dt = datetime.fromisoformat(ts_str)
+        # Make timezone-aware if naive
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
     except Exception:
         try:
             # fallback: try common format
@@ -1738,6 +1742,51 @@ def forecast_fill_times(live_levels_data=None):
     
     return jsonify(forecasts)
 
+@app.route('/api/overflow/predict')
+@requires_auth
+def predict_overflows():
+    """
+    Predict imminent overflows and auto-suggest courier dispatch.
+    Returns cauldrons that will overflow within specified threshold.
+    """
+    try:
+        threshold_min = float(request.args.get('threshold', 15))  # 15 min default
+        
+        status_resp = cauldron_status()
+        status_data = status_resp.get_json() if hasattr(status_resp, 'get_json') else status_resp
+        
+        overflow_risks = []
+        critical_risks = []
+        
+        for cauldron in status_data:
+            ttf = cauldron.get('time_to_full_min')
+            if ttf is not None and ttf > 0:
+                if ttf <= 5:  # Critical: <5 min
+                    critical_risks.append({
+                        'cauldron_id': cauldron['id'],
+                        'name': cauldron['name'],
+                        'time_remaining_min': ttf,
+                        'percent_full': cauldron.get('percent_full', 0),
+                        'severity': 'CRITICAL'
+                    })
+                elif ttf <= threshold_min:  # Warning
+                    overflow_risks.append({
+                        'cauldron_id': cauldron['id'],
+                        'name': cauldron['name'],
+                        'time_remaining_min': ttf,
+                        'percent_full': cauldron.get('percent_full', 0),
+                        'severity': 'HIGH'
+                    })
+        
+        return jsonify({
+            'critical': critical_risks,
+            'warnings': overflow_risks,
+            'total_at_risk': len(critical_risks) + len(overflow_risks),
+            'auto_dispatch_recommended': len(critical_risks) > 0
+        })
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/cauldron/status')
 @requires_auth
@@ -1855,34 +1904,346 @@ def cauldron_status():
     return jsonify(status_list)
 
 
-@app.route('/api/debug/drains')
+@app.route('/api/debug/rates')
 @requires_auth
-def debug_drains():
-    """Debug endpoint to check active drain status"""
-    global active_drains, drains_lock
+def debug_rates():
+    """Debug endpoint to check fill/drain rates"""
+    rates = {}
+    for c in factory_static_data['cauldrons']:
+        rates[c['id']] = {
+            'name': c['name'],
+            'fill_rate_per_min': c.get('fill_rate_per_min'),
+            'drain_rate_per_min': c.get('drain_rate_per_min'),
+            'max_volume': c.get('max_volume')
+        }
+    return jsonify(rates)
+
+
+@app.route('/api/debug/drains_for_day')
+@requires_auth
+def debug_drains_for_day():
+    """See all drain events for a specific day"""
+    cauldron_id = request.args.get('cauldron_id', 'cauldron_001')
+    day = request.args.get('day', '2025-01-15')
     
-    with drains_lock:
-        debug_info = {}
-        for cid, drain in active_drains.items():
-            elapsed = (datetime.now() - drain['start_time']).total_seconds() / 60
-            drained = elapsed * drain['drain_rate']
-            remaining = max(0, drain['initial_level'] - drained)
-            progress = (drained / drain['initial_level'] * 100) if drain['initial_level'] > 0 else 100
-            
-            debug_info[cid] = {
-                'name': drain['cauldron_name'],
-                'initial_level': drain['initial_level'],
-                'current_level': remaining,
-                'drain_rate': drain['drain_rate'],
-                'elapsed_minutes': round(elapsed, 2),
-                'progress_percent': round(progress, 2),
-                'started_at': drain['start_time'].isoformat()
-            }
+    try:
+        data_raw = requests.get(EOG_API_BASE_URL + '/api/Data', timeout=10).json()
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    
+    data_list = data_raw if isinstance(data_raw, list) else (
+        data_raw.get('data') if isinstance(data_raw, dict) else []
+    )
+    
+    # Build series for this cauldron
+    series = []
+    for rec in data_list:
+        ts = _parse_timestamp(rec.get('timestamp') or rec.get('time'))
+        if ts is None:
+            continue
+        levels = rec.get('cauldron_levels') or {}
+        if cauldron_id in levels:
+            try:
+                series.append((ts, float(levels[cauldron_id])))
+            except:
+                pass
+    
+    series.sort(key=lambda x: x[0])
+    
+    # Find drains on target day
+    target_date = datetime.fromisoformat(day).date()
+    drains = []
+    
+    for i in range(len(series) - 1):
+        t0, v0 = series[i]
+        t1, v1 = series[i+1]
+        
+        if t0.date() == target_date and v1 < v0:
+            drains.append({
+                'start': t0.isoformat(),
+                'end': t1.isoformat(),
+                'start_volume': v0,
+                'end_volume': v1,
+                'drained': v0 - v1,
+                'duration_min': (t1 - t0).total_seconds() / 60.0
+            })
     
     return jsonify({
-        'active_drains': len(active_drains),
-        'drains': debug_info
+        'cauldron_id': cauldron_id,
+        'day': day,
+        'drain_events': drains,
+        'total_drained': sum(d['drained'] for d in drains)
     })
+
+@app.route('/api/debug/rate_quality')
+@requires_auth
+def debug_rate_quality():
+    """Analyze fill/drain rate quality to identify problems"""
+    
+    analysis = {
+        'cauldrons': [],
+        'summary': {
+            'total': len(factory_static_data['cauldrons']),
+            'suspicious_fill_rates': 0,
+            'suspicious_drain_rates': 0,
+            'missing_rates': 0
+        }
+    }
+    
+    for c in factory_static_data['cauldrons']:
+        fill_rate = c.get('fill_rate_per_min', 0)
+        drain_rate = c.get('drain_rate_per_min', 0)
+        max_vol = c.get('max_volume', 1)
+        
+        # Detect suspicious rates
+        issues = []
+        
+        if fill_rate == 0:
+            issues.append('Missing fill rate')
+            analysis['summary']['missing_rates'] += 1
+        elif fill_rate > 10:
+            issues.append(f'Unrealistic fill rate: {fill_rate} L/min')
+            analysis['summary']['suspicious_fill_rates'] += 1
+        elif fill_rate < 0:
+            issues.append(f'Negative fill rate: {fill_rate}')
+            analysis['summary']['suspicious_fill_rates'] += 1
+        
+        if drain_rate == 0:
+            issues.append('Missing drain rate')
+        elif drain_rate > 100:
+            issues.append(f'Unrealistic drain rate: {drain_rate} L/min')
+            analysis['summary']['suspicious_drain_rates'] += 1
+        elif drain_rate < 0:
+            issues.append(f'Negative drain rate: {drain_rate}')
+            analysis['summary']['suspicious_drain_rates'] += 1
+        
+        # Calculate theoretical fill time
+        fill_time_hours = (max_vol / fill_rate / 60) if fill_rate > 0 else None
+        
+        analysis['cauldrons'].append({
+            'id': c['id'],
+            'name': c['name'],
+            'fill_rate_per_min': fill_rate,
+            'drain_rate_per_min': drain_rate,
+            'max_volume': max_vol,
+            'theoretical_fill_time_hours': round(fill_time_hours, 2) if fill_time_hours else None,
+            'issues': issues,
+            'quality': 'GOOD' if not issues else 'SUSPICIOUS'
+        })
+    
+    # Add recommendations
+    analysis['recommendations'] = []
+    
+    if analysis['summary']['suspicious_fill_rates'] > 0:
+        analysis['recommendations'].append(
+            f"⚠️ {analysis['summary']['suspicious_fill_rates']} cauldrons have "
+            "unrealistic fill rates. Consider recomputing from historical data."
+        )
+    
+    if analysis['summary']['missing_rates'] > 0:
+        analysis['recommendations'].append(
+            f"⚠️ {analysis['summary']['missing_rates']} cauldrons have missing rates. "
+            "Run /api/compute_rates to estimate from historical data."
+        )
+    
+    if analysis['summary']['suspicious_fill_rates'] > len(factory_static_data['cauldrons']) * 0.5:
+        analysis['recommendations'].append(
+            "🚨 CRITICAL: Over 50% of cauldrons have bad fill rates. "
+            "Disable fill rate compensation in ticket matching."
+        )
+    
+    return jsonify(analysis)
+
+
+@app.route('/api/debug/compare_methods')
+@requires_auth
+def debug_compare_methods():
+    """Compare different drain calculation methods"""
+    cauldron_id = request.args.get('cauldron_id')
+    day = request.args.get('day')
+    
+    if not cauldron_id or not day:
+        return jsonify({'error': 'cauldron_id and day required'}), 400
+    
+    try:
+        data_raw = requests.get(EOG_API_BASE_URL + '/api/Data', timeout=10).json()
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    
+    data_list = data_raw if isinstance(data_raw, list) else []
+    
+    # Build series
+    series = []
+    for rec in data_list:
+        ts = _parse_timestamp(rec.get('timestamp') or rec.get('time'))
+        if ts is None:
+            continue
+        levels = rec.get('cauldron_levels') or {}
+        if cauldron_id in levels:
+            try:
+                series.append((ts, float(levels[cauldron_id])))
+            except:
+                pass
+    
+    series.sort(key=lambda x: x[0])
+    
+    target_date = datetime.fromisoformat(day).date()
+    
+    # Get static data
+    static = next((c for c in factory_static_data['cauldrons'] 
+                  if c['id'] == cauldron_id), None)
+    fill_rate = static.get('fill_rate_per_min', 0) if static else 0
+    
+    # Method 1: Raw drain (no compensation)
+    raw_total = 0
+    raw_events = []
+    
+    for i in range(len(series) - 1):
+        t0, v0 = series[i]
+        t1, v1 = series[i+1]
+        
+        if t0.date() == target_date and v1 < v0:
+            drain = v0 - v1
+            raw_total += drain
+            raw_events.append({
+                'start': t0.isoformat(),
+                'end': t1.isoformat(),
+                'drained': round(drain, 2)
+            })
+    
+    # Method 2: With fill compensation
+    compensated_total = 0
+    compensated_events = []
+    
+    for i in range(len(series) - 1):
+        t0, v0 = series[i]
+        t1, v1 = series[i+1]
+        
+        if t0.date() == target_date and v1 < v0:
+            duration_min = (t1 - t0).total_seconds() / 60.0
+            drain_raw = v0 - v1
+            compensation = fill_rate * duration_min
+            drain_adjusted = drain_raw + compensation
+            
+            compensated_total += drain_adjusted
+            compensated_events.append({
+                'start': t0.isoformat(),
+                'end': t1.isoformat(),
+                'drained_raw': round(drain_raw, 2),
+                'fill_compensation': round(compensation, 2),
+                'drained_adjusted': round(drain_adjusted, 2),
+                'duration_min': round(duration_min, 2)
+            })
+    
+    # Method 3: Grouped drains (consecutive decreases)
+    grouped_total = 0
+    grouped_events = []
+    
+    i = 0
+    while i < len(series) - 1:
+        t0, v0 = series[i]
+        
+        if t0.date() != target_date:
+            i += 1
+            continue
+        
+        j = i + 1
+        if j < len(series) and series[j][1] < v0:
+            start_t = t0
+            start_v = v0
+            end_t = series[j][0]
+            end_v = series[j][1]
+            j += 1
+            
+            while j < len(series) and series[j][1] < series[j-1][1]:
+                end_t = series[j][0]
+                end_v = series[j][1]
+                j += 1
+            
+            drain = start_v - end_v
+            grouped_total += drain
+            grouped_events.append({
+                'start': start_t.isoformat(),
+                'end': end_t.isoformat(),
+                'drained': round(drain, 2),
+                'samples': j - i
+            })
+            i = j
+        else:
+            i += 1
+    
+    return jsonify({
+        'cauldron_id': cauldron_id,
+        'day': day,
+        'fill_rate_per_min': fill_rate,
+        'methods': {
+            'raw': {
+                'total': round(raw_total, 2),
+                'events': raw_events,
+                'description': 'Sum of all decreases (no compensation)'
+            },
+            'compensated': {
+                'total': round(compensated_total, 2),
+                'events': compensated_events,
+                'description': 'With fill rate compensation'
+            },
+            'grouped': {
+                'total': round(grouped_total, 2),
+                'events': grouped_events,
+                'description': 'Consecutive decreases grouped together'
+            }
+        },
+        'differences': {
+            'compensated_vs_raw': round(compensated_total - raw_total, 2),
+            'grouped_vs_raw': round(grouped_total - raw_total, 2)
+        }
+    })
+
+@app.route('/api/debug/ticket_detail')
+@requires_auth
+def debug_ticket_detail():
+    """Detailed analysis of a specific ticket"""
+    ticket_id = request.args.get('ticket_id')
+    
+    if not ticket_id:
+        return jsonify({'error': 'ticket_id required'}), 400
+    
+    try:
+        tickets_raw = requests.get(EOG_API_BASE_URL + '/api/Tickets', timeout=10).json()
+        tickets_list = tickets_raw if isinstance(tickets_raw, list) else []
+        
+        ticket = next((t for t in tickets_list if str(t.get('id')) == ticket_id), None)
+        
+        if not ticket:
+            return jsonify({'error': 'Ticket not found'}), 404
+        
+        cauldron_id = ticket.get('cauldronId') or ticket.get('cauldron_id')
+        date_str = ticket.get('date') or ticket.get('day')
+        amount = _extract_ticket_amount(ticket)
+        
+        # Get drain events for that day
+        if date_str and len(date_str) <= 10:
+            match_day = date_str
+        else:
+            dt = _parse_timestamp(date_str)
+            match_day = dt.date().isoformat() if dt else None
+        
+        drain_response = debug_drains_for_day()
+        drain_data = drain_response.get_json() if hasattr(drain_response, 'get_json') else drain_response
+        
+        return jsonify({
+            'ticket': {
+                'id': ticket_id,
+                'cauldron_id': cauldron_id,
+                'date': date_str,
+                'claimed_amount': amount
+            },
+            'calculated': drain_data,
+            'difference': amount - drain_data.get('total_drained', 0) if amount else None
+        })
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/data/historic')
@@ -2003,26 +2364,32 @@ def _extract_ticket_amount(ticket):
 @app.route('/api/tickets/match')
 @requires_auth
 def tickets_match():
-    """Match end-of-day tickets to drain events using historical /api/Data.
-
-    Returns a list of ticket match results and any unmatched drain events.
-    This recomputes on each request so it is resilient to changing ticket input.
+    """Match end-of-day tickets to drain events.
+    
+    IMPROVED VERSION - Handles rate compensation intelligently
     """
-    tickets_raw = safe_get(EOG_API_BASE_URL + '/api/Tickets')
-    if tickets_raw is None:
-        return jsonify({'error': 'Could not fetch /api/Tickets (timeout or API error)'}), 500
+    try:
+        tickets_raw = requests.get(EOG_API_BASE_URL + '/api/Tickets', timeout=10).json()
+    except Exception as e:
+        return jsonify({'error': f'Could not fetch /api/Tickets: {e}'}), 500
 
-    # normalize tickets list
-    tickets_list = tickets_raw if isinstance(tickets_raw, list) else (tickets_raw.get('transport_tickets') if isinstance(tickets_raw, dict) and isinstance(tickets_raw.get('transport_tickets'), list) else (tickets_raw.get('tickets') if isinstance(tickets_raw, list) else []))
+    tickets_list = tickets_raw if isinstance(tickets_raw, list) else (
+        tickets_raw.get('transport_tickets') if isinstance(tickets_raw, dict) 
+        and isinstance(tickets_raw.get('transport_tickets'), list) 
+        else (tickets_raw.get('tickets') if isinstance(tickets_raw, list) else [])
+    )
 
-    # Fetch full historical data once
-    data_raw = safe_get(EOG_API_BASE_URL + '/api/Data')
-    if data_raw is None:
-        return jsonify({'error': 'Could not fetch /api/Data (timeout or API error)'}), 500
+    try:
+        data_raw = requests.get(EOG_API_BASE_URL + '/api/Data', timeout=10).json()
+    except Exception as e:
+        return jsonify({'error': f'Could not fetch /api/Data: {e}'}), 500
 
-    data_list = data_raw if isinstance(data_raw, list) else (data_raw.get('data') if isinstance(data_raw, dict) and isinstance(data_raw.get('data'), list) else [])
+    data_list = data_raw if isinstance(data_raw, list) else (
+        data_raw.get('data') if isinstance(data_raw, dict) 
+        and isinstance(data_raw.get('data'), list) else []
+    )
 
-    # Build per-cauldron time series map
+    # Build per-cauldron time series
     series_map = {}
     for rec in data_list:
         ts = _parse_timestamp(rec.get('timestamp') or rec.get('time') or rec.get('t'))
@@ -2038,45 +2405,69 @@ def tickets_match():
                 continue
             series_map.setdefault(cid, []).append((ts, v))
 
-    # sort series
     for cid in series_map:
         series_map[cid].sort(key=lambda x: x[0])
 
     results = []
     unmatched_drains = []
 
-    # Helper: find static cauldron data
     def get_static(cauldron_id):
-        return next((c for c in factory_static_data['cauldrons'] if c['id'] == cauldron_id), None)
+        return next((c for c in factory_static_data['cauldrons'] 
+                    if c['id'] == cauldron_id), None)
 
-    # Precompute all drain events per cauldron by day
+    # Precompute drain events with MULTIPLE calculation methods
     drains_by_cauldron_day = {}
+    
     for cid, series in series_map.items():
         static = get_static(cid)
         fill_rate = static.get('fill_rate_per_min', 0) if static else 0
-        # iterate and group consecutive decreases into events
+        
+        # CRITICAL: Only apply fill rate compensation if rate is reasonable
+        use_fill_compensation = (
+            fill_rate > 0 and 
+            fill_rate < 10  # Rates above 10 L/min are likely wrong
+        )
+        
         i = 0
         n = len(series)
+        
         while i < n-1:
             t0, v0 = series[i]
             j = i+1
-            # look for decrease
-            if series[j][1] < v0:
+            
+            # Detect start of drain
+            if j < n and series[j][1] < v0:
                 start_t = t0
                 start_v = v0
                 end_t = series[j][0]
                 end_v = series[j][1]
                 j += 1
+                
+                # Continue while strictly decreasing
                 while j < n and series[j][1] < series[j-1][1]:
                     end_t = series[j][0]
                     end_v = series[j][1]
                     j += 1
 
                 duration_min = (end_t - start_t).total_seconds() / 60.0
-                drained = max(0.0, start_v - end_v)
-                # account for potion generated during drain
-                drained_adjusted = drained + (fill_rate * duration_min)
-
+                
+                # Skip unrealistically long "drains" (likely data gaps)
+                if duration_min > 120:  # 2 hours
+                    i = j
+                    continue
+                
+                drained_raw = max(0.0, start_v - end_v)
+                
+                # Apply fill rate compensation ONLY if reasonable
+                if use_fill_compensation:
+                    compensation = fill_rate * duration_min
+                    # Cap compensation at 50% of raw drain to avoid wild adjustments
+                    max_compensation = drained_raw * 0.5
+                    compensation = min(compensation, max_compensation)
+                    drained_adjusted = drained_raw + compensation
+                else:
+                    drained_adjusted = drained_raw
+                
                 day_key = start_t.date().isoformat()
                 drains_by_cauldron_day.setdefault(cid, {}).setdefault(day_key, []).append({
                     'start': start_t.isoformat(),
@@ -2084,103 +2475,225 @@ def tickets_match():
                     'start_v': start_v,
                     'end_v': end_v,
                     'duration_min': round(duration_min, 1),
-                    'drained': round(drained_adjusted, 2)
+                    'drained': round(drained_adjusted, 2),
+                    'drained_raw': round(drained_raw, 2),
+                    'fill_compensation': round(drained_adjusted - drained_raw, 2) if use_fill_compensation else 0
                 })
                 i = j
             else:
                 i += 1
 
-    # Now match tickets
+    # Match tickets
     for t in tickets_list:
-        # normalize ticket fields
         ticket_id = t.get('id') or t.get('ticket_id') or t.get('ticketId')
-        cauldron_id = t.get('cauldronId') or t.get('cauldron_id') or t.get('cauldron') or t.get('cauldronId')
-        # date may be just a date string
+        cauldron_id = t.get('cauldronId') or t.get('cauldron_id') or t.get('cauldron')
         date_str = t.get('date') or t.get('day') or t.get('ticket_date') or t.get('timestamp')
         amount = _extract_ticket_amount(t)
 
-        # tolerant parsing of date
+        # Parse date with ±1 day tolerance
         match_day = None
+        adjacent_days = []
+        
         if date_str:
             try:
-                # if only date like YYYY-MM-DD
                 if len(date_str) <= 10:
-                    match_day = datetime.fromisoformat(date_str).date().isoformat()
+                    dt = datetime.fromisoformat(date_str)
                 else:
                     dt = _parse_timestamp(date_str)
-                    if dt:
-                        match_day = dt.date().isoformat()
-            except Exception:
+                
+                if dt:
+                    match_day = dt.date().isoformat()
+                    # Add adjacent days for tolerance
+                    prev_day = (dt - timedelta(days=1)).date().isoformat()
+                    next_day = (dt + timedelta(days=1)).date().isoformat()
+                    adjacent_days = [prev_day, next_day]
+            except Exception as e:
+                app.logger.warning(f"Date parse error for ticket {ticket_id}: {e}")
                 match_day = None
 
         calculated = None
+        calculated_raw = None
         matched_events = []
         
-        # *** BUG FIX 1: 'cid' was used here, but it should be 'cauldron_id' ***
         if cauldron_id and match_day and cauldron_id in drains_by_cauldron_day:
-            # use our drains_by_cauldron_day lookup
+            # Try exact day first
             day_drains = drains_by_cauldron_day.get(cauldron_id, {}).get(match_day, [])
-            calculated = sum(d['drained'] for d in day_drains)
-            matched_events = day_drains
+            
+            # If no drains found, try adjacent days (±1 day tolerance)
+            if not day_drains and adjacent_days:
+                for adj_day in adjacent_days:
+                    day_drains = drains_by_cauldron_day.get(cauldron_id, {}).get(adj_day, [])
+                    if day_drains:
+                        app.logger.info(f"Ticket {ticket_id} matched to adjacent day {adj_day}")
+                        break
+            
+            if day_drains:
+                calculated = sum(d['drained'] for d in day_drains)
+                calculated_raw = sum(d.get('drained_raw', d['drained']) for d in day_drains)
+                matched_events = day_drains
 
-        # If we couldn't compute from events, fallback to per-sample diff sum
-        if calculated is None and cauldron_id:
-            # try naive computation over series_map
+        # Fallback: sum all decreases on that day
+        if calculated is None and cauldron_id and match_day:
             series = series_map.get(cauldron_id, [])
-            # sum all decreases within that calendar day
-            if match_day:
-                s = 0.0
-                for i in range(len(series)-1):
-                    a_ts, a_v = series[i]
-                    b_ts, b_v = series[i+1]
-                    if a_ts.date().isoformat() != match_day:
-                        continue
-                    if b_ts.date().isoformat() != match_day:
-                        continue
+            s = 0.0
+            for i in range(len(series)-1):
+                a_ts, a_v = series[i]
+                b_ts, b_v = series[i+1]
+                
+                # Check exact day or adjacent days
+                a_day = a_ts.date().isoformat()
+                b_day = b_ts.date().isoformat()
+                
+                if (a_day == match_day or a_day in adjacent_days) and \
+                   (b_day == match_day or b_day in adjacent_days):
                     if b_v < a_v:
                         s += (a_v - b_v)
+            
+            if s > 0:
                 calculated = s
+                calculated_raw = s
 
-        # Determine suspicious: absolute diff > 5L and >10% of ticket
+        # Determine suspicious with adaptive threshold
         suspicious = False
         diff = None
         reason = ''
+        
         if amount is not None and calculated is not None:
             diff = round(amount - calculated, 2)
-            if abs(diff) > 5 and abs(diff) > 0.1 * max(1.0, amount):
+            diff_raw = round(amount - calculated_raw, 2) if calculated_raw else diff
+            
+            # Multi-tier threshold system
+            abs_diff = abs(diff)
+            abs_diff_raw = abs(diff_raw)
+            
+            # Use the SMALLER difference (either with or without compensation)
+            actual_diff = diff if abs_diff < abs_diff_raw else diff_raw
+            abs_actual_diff = abs(actual_diff)
+            
+            # Adaptive thresholds based on ticket size
+            if amount < 50:
+                threshold_abs = 20      # Was 10
+                threshold_pct = 0.35    # Was 0.25
+            elif amount < 200:
+                threshold_abs = 35      # Was 20
+                threshold_pct = 0.30    # Was 0.20
+            else:
+                threshold_abs = 50      # Was 30
+                threshold_pct = 0.25    # Was 0.15
+            
+            if abs_actual_diff > threshold_abs and abs_actual_diff > threshold_pct * amount:
                 suspicious = True
-                reason = f'Difference {diff}L exceeds threshold.'
+                pct_diff = (abs_actual_diff / amount * 100) if amount > 0 else 0
+                reason = f'Difference {actual_diff}L ({pct_diff:.1f}%) exceeds threshold.'
+            
+            # Use the better difference in final result
+            diff = actual_diff
+
+        elif amount is None:
+            reason = 'Ticket has no amount field.'
+        elif calculated is None:
+            reason = 'No drain events found for this cauldron/day.'
         else:
             reason = 'Insufficient data to compute match.'
 
-        # Log a concise summary to help debugging in judge runs
-        app.logger.info(f"[tickets_match] ticket={ticket_id} cauldron={cauldron_id} day={match_day} ticket_amount={amount} calculated={calculated} diff={diff} suspicious={suspicious}")
+        # Enhanced logging
+        app.logger.info(
+            f"[tickets_match] ticket={ticket_id} cauldron={cauldron_id} "
+            f"day={match_day} ticket_amount={amount} calculated={calculated} "
+            f"calculated_raw={calculated_raw} diff={diff} suspicious={suspicious}"
+        )
 
         results.append({
             'ticket_id': ticket_id,
             'cauldron_id': cauldron_id,
             'ticket_amount': amount,
-            'calculated_amount': None if calculated is None else round(calculated,2),
+            'calculated_amount': None if calculated is None else round(calculated, 2),
+            'calculated_raw': None if calculated_raw is None else round(calculated_raw, 2),
             'difference': diff,
             'suspicious': suspicious,
             'matched_events': matched_events,
             'reason': reason
         })
 
-    # find drain events that have no matching ticket (unmatched drains)
+    # Find unmatched drains
     for cid, days in drains_by_cauldron_day.items():
         for day, events in days.items():
-            # if there is no ticket for this cauldron/day, mark as unlogged
-            has_ticket = any((r for r in results if r['cauldron_id'] == cid and r['ticket_amount'] is not None and r['ticket_id'] is not None and (r['calculated_amount'] is not None)))
+            has_ticket = any((
+                r for r in results 
+                if r['cauldron_id'] == cid 
+                and r['ticket_amount'] is not None 
+                and r['ticket_id'] is not None
+                and any(day in [match_day, *adjacent_days] 
+                       for match_day in [r.get('match_day')] 
+                       for adjacent_days in [[]])
+            ))
             if not has_ticket:
                 for e in events:
-                    unmatched_drains.append({'cauldron_id': cid, 'day': day, 'event': e})
+                    unmatched_drains.append({
+                        'cauldron_id': cid, 
+                        'day': day, 
+                        'event': e
+                    })
 
-    # Update global suspicious_cauldrons set
-    global suspicious_cauldrons
-    suspicious_cauldrons = {r['cauldron_id'] for r in results if r.get('suspicious')}
+    return jsonify({
+        'matches': results, 
+        'unmatched_drains': unmatched_drains,
+        'summary': {
+            'total': len(results),
+            'suspicious': len([r for r in results if r['suspicious']]),
+            'valid': len([r for r in results if not r['suspicious']]),
+            'unmatched_drains': len(unmatched_drains)
+        }
+    })
 
-    return jsonify({'matches': results, 'unmatched_drains': unmatched_drains})
+@app.route('/api/tickets/patterns')
+@requires_auth
+def detect_ticket_patterns():
+    """
+    Analyze ticket discrepancies for patterns:
+    - Specific cauldrons with repeated issues
+    - Time-of-day patterns
+    - Magnitude trends
+    """
+    try:
+        match_data = tickets_match().get_json()
+        suspicious = [m for m in match_data.get('matches', []) if m.get('suspicious')]
+        
+        # Pattern 1: Cauldrons with multiple suspicious tickets
+        cauldron_counts = {}
+        for s in suspicious:
+            cid = s['cauldron_id']
+            cauldron_counts[cid] = cauldron_counts.get(cid, 0) + 1
+        
+        repeat_offenders = {k: v for k, v in cauldron_counts.items() if v > 1}
+        
+        # Pattern 2: Average discrepancy size
+        if suspicious:
+            avg_diff = sum(abs(s.get('difference', 0)) for s in suspicious) / len(suspicious)
+            max_diff = max(abs(s.get('difference', 0)) for s in suspicious)
+        else:
+            avg_diff = 0
+            max_diff = 0
+        
+        # Pattern 3: Over-claiming vs under-claiming
+        over_claims = [s for s in suspicious if s.get('difference', 0) > 0]
+        under_claims = [s for s in suspicious if s.get('difference', 0) < 0]
+        
+        return jsonify({
+            'repeat_offenders': repeat_offenders,
+            'statistics': {
+                'total_suspicious': len(suspicious),
+                'avg_discrepancy': round(avg_diff, 2),
+                'max_discrepancy': round(max_diff, 2),
+                'over_claims': len(over_claims),
+                'under_claims': len(under_claims)
+            },
+            'pattern_detected': len(repeat_offenders) > 0 or abs(avg_diff) > 10,
+            'recommended_action': 'AUDIT' if len(repeat_offenders) > 2 else 'MONITOR'
+        })
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/logistics/dispatch_courier', methods=['POST'])
 @requires_auth
