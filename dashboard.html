@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Poyolabs - CauldronWatch</title>
+    <title>PoyoLabs Dashboard</title>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=MedievalSharp&display=swap');
         
@@ -28,6 +28,8 @@
             opacity: 0;
             animation: fadeIn 1s ease-in forwards;
         }
+        /* Keep agent panel default background; no override here */
+        .agent-panel { background: rgb(41, 23, 40); }
         
         @keyframes fadeIn {
             from {
@@ -46,21 +48,6 @@
             border-radius: 0;
             display: inline-block;
             margin: 20px auto;
-        }
-        
-        /* ========== NEW: User profile section ========== */
-        .user-profile {
-            position: fixed;
-            top: 10px;
-            right: 20px;
-            background: rgb(41, 23, 40, 0.9);
-            padding: 10px 15px;
-            border-radius: 0;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            box-shadow: 0 2px 10px rgb(35, 20, 34, 0.3);
-            z-index: 1000;
         }
 
         .user-profile img {
@@ -150,9 +137,9 @@
             animation: pulse 1s infinite;
             border: 2px solid transparent; /* Clear other borders if anomaly */
         }
-        /* Warning borders */
-        .cauldron.warning-90 { border: 2px solid #f39c12; }
-        .cauldron.warning-75 { border: 2px solid #f1c40f; }
+    /* Warning borders (adjusted to red hues for near-full) */
+    .cauldron.warning-90 { border: 2px solid #ff3b30; } /* Deep alert red */
+    .cauldron.warning-75 { border: 2px solid #ff6f61; } /* Softer pre-alert red */
 
         .cauldron-name { 
             font-family: 'Longalberica', serif;
@@ -173,13 +160,13 @@
         }
         .chat-user { 
             color: #82aaff;
-            background-color: #3d4968;
+            background-color: #111229; /* message box matches network map window color */
             padding: 5px;
             border-radius: 0;
          }
         .chat-agent { 
-            color: #3d4968;
-            background-color: #c3e88d; 
+            color: #e0e0e0; /* high-contrast text */
+            background-color: #111229; /* message box matches network map window color */
             padding: 5px;
             border-radius: 0;
         }
@@ -253,7 +240,7 @@
     <div style="text-align:center;">
         <h1>
             <img src="/static/potion.png" alt="Potion" style="width:48px;height:48px;vertical-align:middle;margin-right:12px;">
-            Poyolabs Factory Monitor
+            Potion Factory Monitor
             <img src="/static/potion.png" alt="Potion" style="width:48px;height:48px;vertical-align:middle;margin-left:12px;">
         </h1>
     </div>
@@ -394,9 +381,9 @@
                         // update anomaly/alert styling
                         if (data.anomaly) cauldronEl.classList.add('anomaly'); else cauldronEl.classList.remove('anomaly');
                         if (percent >= 90) {
-                            cauldronEl.style.border = '2px solid #f39c12';
+                            cauldronEl.style.border = '2px solid #ff3b30'; // deep red for critical fullness
                         } else if (percent >= 75) {
-                            cauldronEl.style.border = '2px solid #f1c40f';
+                            cauldronEl.style.border = '2px solid #ff6f61'; // lighter red for warning zone
                         } else {
                             cauldronEl.style.border = '';
                         }
