@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Poyolabs - CauldronWatch</title>
+    <style>
+        /* Basic styles to make it look good for a hackathon */
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background: #1a1a2e;
+            color: #e0e0e0;
+            margin: 0;
+            padding: 20px;
+        }
+        h1 {
+            color: #f7b733; /* Potion gold */
+            text-align: center;
+        }
+        .container {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 20px;
+        }
+        .dashboard, .agent-panel {
+            background: #2a2a4e;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+        }
+        h2 {
+            border-bottom: 2px solid #f7b733;
+            padding-bottom: 5px;
+        }
+        
+        /* Cauldron Styles */
+        #cauldron-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 15px;
+        }
+        .cauldron {
+            background: #3a3a6e;
+            padding: 10px;
+            border-radius: 5px;
+            text-align: center;
+            /* Add transition for smooth border color changes */
+            transition: border 0.5s ease;
+            border: 2px solid transparent;
+        }
+        .cauldron.anomaly {
+            background: #e74c3c; /* Red for anomaly */
+            color: #fff;
+            animation: pulse 1s infinite;
+            border: 2px solid transparent; /* Clear other borders if anomaly */
+        }
+        /* Warning borders */
+        .cauldron.warning-90 { border: 2px solid #f39c12; }
+        .cauldron.warning-75 { border: 2px solid #f1c40f; }
+
+        .cauldron-name { font-weight: bold; }
+        .level-bar-container {
+            background: #1a1a2e;
+            border-radius: 5px;
+            height: 20px;
+            overflow: hidden;
+            margin-top: 10px;
+        }
+        .level-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #4facf7, #2ecc71);
+            width: 0%; /* Will be set by JS */
+            transition: width 0.5s ease;
+        }
+
+        /* Agent Chat Styles */
+        #chat-log {
+            height: 300px;
+            overflow-y: auto;
+            background: #1a1a2e;
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 10px;
+        }
+        #chat-log div {
+            margin-bottom: 8px;
+        }
+        .chat-user { color: #82aaff; }
+        .chat-agent { color: #c3e88d; }
+        .chat-agent-plan {
+            color: #888;
+            font-style: italic;
+            font-size: 0.9em;
+            padding-left: 15px;
+            border-left: 2px solid #888;
+        }
+        #chat-input {
+            width: calc(100% - 10px);
+            padding: 8px;
+            border: none;
+            border-radius: 5px;
+            background: #3a3a6e;
+            color: #fff;
+        }
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(231, 76, 60, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(231, 76, 60, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(231, 76, 60, 0); }
+        }
+    </style>
+</head>
+<body>
+
+    <h1>🔮 Poyolabs Factory Monitor</h1>
+
+    <div class="container">
+        <div class="dashboard">
+            <h2>CauldronWatch Dashboard</h2>
+            <div style="display:flex;gap:12px;align-items:flex-start">
+                <div style="flex:1">
+                    <div id="cauldron-grid"></div>
+                </div>
+                <div style="width:300px">
+                    <h3>Network Map</h3>
+                    <div id="network-map" style="background:#111229;padding:8px;border-radius:6px;height:300px;overflow:auto"></div>
+                    <h3 style="margin-top:12px">Historic Playback</h3>
+                    <div>
+                        <label>Date: <input type="date" id="play-date"></label>
+                        <button id="play-btn">Play</button>
+                        <button id="stop-btn">Stop</button>
+                    </div>
+                    <div style="margin-top:8px">
+                        <button id="run-match">Run Ticket Matching</button>
+                    </div>
+                    <div id="match-results" style="margin-top:8px;max-height:200px;overflow:auto;background:#0f1220;padding:8px;border-radius:6px;color:#ddd"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="agent-panel">
+            <h2>Poyolabs Agent</h2>
+            <div id="chat-log">
+                <div class="chat-agent">Welcome, Manager. I am monitoring the factory. What do you need?</div>
+            </div>
+            <form id="chat-form">
+                <input type="text" id="chat-input" placeholder="Ask your agent..." autocomplete="off">
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // Get all the HTML elements we need
+        const cauldronGrid = document.getElementById('cauldron-grid');
+        const chatLog = document.getElementById('chat-log');
+        const chatForm = document.getElementById('chat-form');
+        const chatInput = document.getElementById('chat-input');
+        
+        // --- 1. EOG: Render the Cauldron Dashboard ---
+        
+        async function updateCauldronLevels() {
+            try {
+                const response = await fetch('/api/cauldron/status');
+                const cauldrons = await response.json();
+
+                // Clock sync: use the server 'as_of' field from the first record (if present)
+                if (Array.isArray(cauldrons) && cauldrons.length>0 && cauldrons[0].as_of) {
+                    const serverAsOf = new Date(cauldrons[0].as_of).getTime();
+                    const clientNow = Date.now();
+                    window._serverClockOffsetMs = serverAsOf - clientNow;
+                }
+
+                // Update in-place to avoid recreating DOM nodes every poll
+                for (const data of cauldrons) {
+                    const id = data.id;
+                    const currentLevel = Number(data.current_level || 0);
+                    const maxVolume = Number(data.max_volume || 1);
+                    const percent = Math.max(0, Math.min(100, Number(data.percent_full || ((currentLevel / maxVolume) * 100))));
+
+                    let cauldronEl = cauldronGrid.querySelector(`.cauldron[data-id="${id}"]`);
+                    const percentPerSec = (data.fill_rate_per_min && maxVolume) ? (Number(data.fill_rate_per_min)/60.0)/Number(maxVolume)*100.0 : null;
+
+                    // compute server absolute fullAt
+                    let serverFullAt = null;
+                    if (data.full_at) {
+                        serverFullAt = new Date(data.full_at).getTime();
+                    } else if (data.as_of && data.time_to_full_seconds != null) {
+                        serverFullAt = new Date(data.as_of).getTime() + (Number(data.time_to_full_seconds) * 1000);
+                    } else if (data.time_to_full_seconds != null) {
+                        serverFullAt = Date.now() + (Number(data.time_to_full_seconds) * 1000);
+                    }
+
+                    // If element doesn't exist, create it and append
+                    if (!cauldronEl) {
+                        cauldronEl = document.createElement('div');
+                        cauldronEl.classList.add('cauldron');
+                        cauldronEl.setAttribute('data-id', id);
+                        cauldronEl.innerHTML = `
+                            <div class="cauldron-name">${data.name}</div>
+                            <div class="cauldron-percent">${percent.toFixed(1)}% Full</div>
+                            <small class="cauldron-volume">(${currentLevel.toFixed(0)}L / ${maxVolume}L)</small>
+                            <div class="level-bar-container">
+                                <div class="level-bar" style="width: ${percent}%"></div>
+                            </div>
+                            <div style="margin-top:8px;font-size:0.9em;color:#ddd">Time to full: <strong class="time-to-fill">—</strong></div>
+                        `;
+                        cauldronGrid.appendChild(cauldronEl);
+                    } else {
+                        // update anomaly/alert styling
+                        if (data.anomaly) cauldronEl.classList.add('anomaly'); else cauldronEl.classList.remove('anomaly');
+                        if (percent >= 90) {
+                            cauldronEl.style.border = '2px solid #f39c12';
+                        } else if (percent >= 75) {
+                            cauldronEl.style.border = '2px solid #f1c40f';
+                        } else {
+                            cauldronEl.style.border = '';
+                        }
+                        // update texts and bar
+                        const pctEl = cauldronEl.querySelector('.cauldron-percent');
+                        const volEl = cauldronEl.querySelector('.cauldron-volume');
+                        const bar = cauldronEl.querySelector('.level-bar');
+                        if (pctEl) pctEl.textContent = `${percent.toFixed(1)}% Full`;
+                        if (volEl) volEl.textContent = `(${currentLevel.toFixed(0)}L / ${maxVolume}L)`;
+                        if (bar) bar.style.width = `${percent}%`;
+                    }
+
+                    // initialize or update per-cauldron state but avoid resetting fullAt unless meaningful change
+                    window._cauldronState = window._cauldronState || {};
+                    const prev = window._cauldronState[id] || {};
+                    if (serverFullAt) {
+                        const nowAdj = Date.now() + (window._serverClockOffsetMs || 0);
+                        if (!prev.fullAt) {
+                            // first time seeing this cauldron
+                            prev.fullAt = serverFullAt;
+                            prev.initialTotalSeconds = Math.max(1, Math.round((prev.fullAt - nowAdj)/1000));
+                            prev.startPercent = percent;
+                            prev.currentPercent = percent;
+                        } else {
+                            const delta = serverFullAt - prev.fullAt;
+                            if (delta <= -2000) {
+                                // significant decrease: accept immediately
+                                prev.fullAt = serverFullAt;
+                                prev.initialTotalSeconds = Math.max(1, Math.round((prev.fullAt - nowAdj)/1000));
+                                prev.startPercent = percent;
+                                prev.currentPercent = percent;
+                            } else if (delta > 0) {
+                                // increase: allow only a small step to avoid jumping backwards
+                                const maxIncreaseMs = 5000; // allow up to 5s increase per poll
+                                const allowed = Math.min(delta, maxIncreaseMs);
+                                prev.fullAt = prev.fullAt + allowed;
+                                prev.initialTotalSeconds = Math.max(1, Math.round((prev.fullAt - nowAdj)/1000));
+                                // keep continuity by using currentPercent as starting point
+                                prev.startPercent = prev.currentPercent || percent;
+                            }
+                        }
+                    }
+                    prev.percentPerSec = percentPerSec;
+                    window._cauldronState[id] = prev;
+                }
+            } catch (error) {
+                console.error('Error fetching cauldron levels:', error);
+            }
+        }
+
+        // Per-second updater: smoothly update time-to-fill and percent while polling runs every 5s
+        window._cauldronState = window._cauldronState || {};
+        setInterval(() => {
+            try {
+                const now = Date.now() + (window._serverClockOffsetMs || 0);
+                for (const [id, s] of Object.entries(window._cauldronState)) {
+                    const el = document.querySelector(`.cauldron[data-id="${id}"]`);
+                    if (!el) continue;
+                    if (!s.fullAt) continue; // no forecast
+
+                    const remaining = Math.max(0, Math.round((s.fullAt - now) / 1000));
+                    const tEl = el.querySelector('.time-to-fill');
+                    if (tEl) {
+                        const h = Math.floor(remaining / 3600);
+                        const m = Math.floor((remaining % 3600) / 60);
+                        const sec = remaining % 60;
+                        const str = h>0 ? `${h}h ${m}m ${sec}s` : (m>0 ? `${m}m ${sec}s` : `${sec}s`);
+                        tEl.textContent = remaining === 0 ? 'Full' : str;
+                    }
+
+                    // update percent by elapsed time since initialTotalSeconds
+                    if (s.percentPerSec && s.initialTotalSeconds) {
+                        const elapsed = Math.max(0, s.initialTotalSeconds - remaining);
+                        const newPercent = Math.min(100, (s.startPercent || 0) + (s.percentPerSec * elapsed));
+                        const bar = el.querySelector('.level-bar');
+                        const pctEl = el.querySelector('.cauldron-percent');
+                        if (bar) bar.style.width = `${newPercent}%`;
+                        if (pctEl) pctEl.textContent = `${newPercent.toFixed(1)}% Full`;
+                        s.currentPercent = newPercent;
+                    }
+                }
+            } catch (e) {
+                // swallow; this is best-effort UI smoothing
+            }
+        }, 1000);
+        
+        // --- 2. NVIDIA: Handle the Agent Chat ---
+        
+        chatForm.addEventListener('submit', async (e) => {
+            e.preventDefault(); // Stop the page from reloading
+            
+            const message = chatInput.value;
+            if (!message) return;
+            
+            addChatMessage(message, 'user');
+            chatInput.value = ''; // Clear the input
+            
+            try {
+                // We send the user's message to the /api/agent/chat endpoint
+                const response = await fetch('/api/agent/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    // Remember to add use_nemotron: true if you want to use the NVIDIA API
+                    body: JSON.stringify({ message: message, use_nemotron: true })
+                });
+                
+                const agentData = await response.json();
+                
+                // Add the agent's multi-step plan (for the NVIDIA judges!)
+                if (agentData.agent_plan && agentData.agent_plan.length > 0) {
+                    agentData.agent_plan.forEach(step => {
+                        addChatMessage(step, 'agent-plan');
+                    });
+                }
+                
+                // Add the agent's final response
+                addChatMessage(agentData.agent_response, 'agent');
+                
+                // After the agent acts, update the dashboard
+                // We call this manually to make the dispatch "action" feel instant
+                updateCauldronLevels();
+
+            } catch (error) {
+                console.error('Error chatting with agent:', error);
+                addChatMessage('Error connecting to the agent. Is the server running?', 'agent');
+            }
+        });
+        
+        function addChatMessage(message, sender) {
+            const messageEl = document.createElement('div');
+            if (sender === 'user') {
+                messageEl.className = 'chat-user';
+                messageEl.textContent = `> ${message}`;
+            } else if (sender === 'agent') {
+                messageEl.className = 'chat-agent';
+                messageEl.textContent = `🤖 ${message}`;
+            } else if (sender === 'agent-plan') {
+                messageEl.className = 'chat-agent-plan';
+                messageEl.textContent = `  ${message}`;
+            }
+            chatLog.appendChild(messageEl);
+            chatLog.scrollTop = chatLog.scrollHeight; // Auto-scroll
+        }
+
+        // --- 3. Start the Factory! ---
+        
+        // Historic playback state
+        let playbackTimer = null;
+
+        // Fetch network map and render a simple SVG
+        async function loadNetwork() {
+            try {
+                const res = await fetch('/api/network');
+                const data = await res.json();
+                const mapEl = document.getElementById('network-map');
+                mapEl.innerHTML = '';
+                // Simple rendering: show cauldrons with coordinates if available
+                const svgNS = 'http://www.w3.org/2000/svg';
+                const svg = document.createElementNS(svgNS, 'svg');
+                svg.setAttribute('width','100%');
+                svg.setAttribute('height','280');
+                svg.style.background = 'transparent';
+
+                const cauldrons = data.cauldrons || [];
+                // Map lat/lon to box
+                let minLat=90, maxLat=-90, minLon=180, maxLon=-180;
+                cauldrons.forEach(c => {
+                    if (c.lat) {minLat=Math.min(minLat,c.lat); maxLat=Math.max(maxLat,c.lat)}
+                    if (c.lon) {minLon=Math.min(minLon,c.lon); maxLon=Math.max(maxLon,c.lon)}
+                });
+                if (minLat===90) {minLat=0;maxLat=1;minLon=0;maxLon=1}
+
+                cauldrons.forEach(c => {
+                    const x = ((c.lon - minLon) / (maxLon - minLon || 1)) * 280 + 10;
+                    const y = ((maxLat - (c.lat || minLat)) / (maxLat - minLat || 1)) * 240 + 20;
+                    const g = document.createElementNS(svgNS, 'g');
+                    const circle = document.createElementNS(svgNS,'circle');
+                    circle.setAttribute('cx', x);
+                    circle.setAttribute('cy', y);
+                    circle.setAttribute('r', 8);
+                    circle.setAttribute('fill','#4facf7');
+                    circle.setAttribute('stroke','#fff');
+                    circle.setAttribute('stroke-width','0.8');
+                    g.appendChild(circle);
+                    const label = document.createElementNS(svgNS,'text');
+                    label.setAttribute('x', x+12);
+                    label.setAttribute('y', y+4);
+                    label.setAttribute('fill','#ddd');
+                    label.setAttribute('font-size','11');
+                    label.textContent = c.name || c.id;
+                    g.appendChild(label);
+                    svg.appendChild(g);
+                });
+                mapEl.appendChild(svg);
+            } catch (e) {
+                console.error('Could not load network', e);
+            }
+        }
+
+        async function playHistoric(dateStr) {
+            if (!dateStr) return;
+            // fetch the full day's historic samples
+            const res = await fetch(`/api/data/historic?start=${dateStr}&end=${dateStr}`);
+            const samples = await res.json();
+            if (!Array.isArray(samples) || samples.length===0) {
+                alert('No historic data for that date.');
+                return;
+            }
+
+            // Normalize: if records are full objects with cauldron_levels, we'll step through them
+            let i = 0;
+            if (playbackTimer) clearInterval(playbackTimer);
+            playbackTimer = setInterval(() => {
+                const rec = samples[i];
+                // if record has cauldron_levels, replace the grid with snapshot
+                if (rec.cauldron_levels) {
+                    // build temporary snapshot objects similar to /api/cauldron/status
+                    const snapshot = [];
+                    const staticCauldrons = window.staticCauldrons || [];
+                    for (const sc of staticCauldrons) {
+                        const id = sc.id;
+                        snapshot.push({
+                            id: id,
+                            name: sc.name,
+                            current_level: rec.cauldron_levels[id] || 0,
+                            max_volume: sc.max_volume || 1,
+                            anomaly: (rec.cauldron_levels[id] || 0) >= (sc.max_volume || 1),
+                            percent_full: ((rec.cauldron_levels[id] || 0) / (sc.max_volume || 1)) * 100
+                        });
+                    }
+                    // render snapshot into grid using in-place updates (avoid clearing DOM)
+                    for (const data of snapshot) {
+                        const id = data.id;
+                        let cauldronEl = cauldronGrid.querySelector(`.cauldron[data-id="${id}"]`);
+                        if (!cauldronEl) {
+                            cauldronEl = document.createElement('div');
+                            cauldronEl.classList.add('cauldron');
+                            cauldronEl.setAttribute('data-id', id);
+                            cauldronEl.innerHTML = `
+                                <div class="cauldron-name">${data.name}</div>
+                                <div class="cauldron-percent">${data.percent_full.toFixed(1)}% Full</div>
+                                <small class="cauldron-volume">(${(data.current_level||0).toFixed(0)}L / ${data.max_volume}L)</small>
+                                <div class="level-bar-container"><div class="level-bar" style="width:${data.percent_full}%"></div></div>
+                                <div style="margin-top:8px;font-size:0.9em;color:#ddd">Time to full: <strong class="time-to-fill">—</strong></div>
+                            `;
+                            cauldronGrid.appendChild(cauldronEl);
+                        } else {
+                            // update existing element
+                            if (data.anomaly) cauldronEl.classList.add('anomaly'); else cauldronEl.classList.remove('anomaly');
+                            const pctEl = cauldronEl.querySelector('.cauldron-percent');
+                            const volEl = cauldronEl.querySelector('.cauldron-volume');
+                            const bar = cauldronEl.querySelector('.level-bar');
+                            if (pctEl) pctEl.textContent = `${data.percent_full.toFixed(1)}% Full`;
+                            if (volEl) volEl.textContent = `(${(data.current_level||0).toFixed(0)}L / ${data.max_volume}L)`;
+                            if (bar) bar.style.width = `${data.percent_full}%`;
+                        }
+                        // ensure playback doesn't show stale fullAt-based timers
+                        const state = window._cauldronState = window._cauldronState || {};
+                        state[id] = state[id] || {};
+                        state[id].fullAt = null;
+                        const el = cauldronGrid.querySelector(`.cauldron[data-id="${id}"]`);
+                        const tEl = el && el.querySelector('.time-to-fill');
+                        if (tEl) tEl.textContent = '—';
+                    }
+                }
+
+                i++;
+                if (i >= samples.length) {
+                    clearInterval(playbackTimer); playbackTimer = null;
+                }
+            }, 800);
+        }
+
+        document.getElementById('play-btn').addEventListener('click', () => {
+            const d = document.getElementById('play-date').value;
+            playHistoric(d);
+        });
+        document.getElementById('stop-btn').addEventListener('click', () => {
+            if (playbackTimer) { clearInterval(playbackTimer); playbackTimer = null; }
+        });
+
+        document.getElementById('run-match').addEventListener('click', async () => {
+            const res = await fetch('/api/tickets/match');
+            const data = await res.json();
+            const out = document.getElementById('match-results');
+            out.innerHTML = '';
+            if (data.error) { out.textContent = data.error; return; }
+            const matches = data.matches || [];
+            matches.forEach(m => {
+                const div = document.createElement('div');
+                div.style.padding = '6px 0';
+                div.style.borderBottom = '1px solid rgba(255,255,255,0.03)';
+                div.innerHTML = `<strong>${m.ticket_id || '(no id)'} (${m.cauldron_id})</strong> — Ticket: ${m.ticket_amount || 'N/A'}L, Calculated: ${m.calculated_amount || 'N/A'}L<br/><span style="color:${m.suspicious? '#ff6b6b':'#9ad18a'}">${m.suspicious? 'SUSPICIOUS':'OK'}</span> — ${m.reason}`;
+                out.appendChild(div);
+            });
+            if ((data.unmatched_drains || []).length>0) {
+                const h = document.createElement('div'); h.style.marginTop='8px'; h.innerHTML = '<strong>Unmatched Drains</strong>';
+                out.appendChild(h);
+                (data.unmatched_drains||[]).forEach(u => {
+                    const d = document.createElement('div'); d.style.fontSize='12px'; d.style.marginTop='4px';
+                    d.textContent = `${u.cauldron_id} ${u.day} drained ${u.event.drained}L (from ${u.event.start} to ${u.event.end})`;
+                    out.appendChild(d);
+                });
+            }
+        });
+
+        // Update the levels when the page loads
+        updateCauldronLevels();
+        // Also load network and save static cauldrons in window for playback
+        loadNetwork().then(() => {
+            fetch('/api/network').then(r=>r.json()).then(d=>{ window.staticCauldrons = d.cauldrons || []; });
+        });
+        
+        // Keep the dashboard live-updating (like the EOG spec)
+        setInterval(updateCauldronLevels, 5000); // Update every 5 seconds
+    </script>
+</body>
+</html>
