@@ -97,6 +97,22 @@
             font-family: 'MedievalSharp', cursive;
             text-align: center;
         }
+
+        /* Cauldron fullness GIF styles */
+        .cauldron-gif-container {
+            margin-top: 6px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .cauldron-gif {
+            width: 100%;
+            max-width: 140px;
+            height: auto;
+            display: block;
+            image-rendering: auto;
+            border-radius: 4px;
+        }
         
         /* Cauldron Styles */
         #cauldron-grid {
@@ -124,19 +140,6 @@
         .cauldron.warning-75 { border: 2px solid #f1c40f; }
 
         .cauldron-name { font-weight: bold; }
-        .level-bar-container {
-            background: #1a1a2e;
-            border-radius: 5px;
-            height: 20px;
-            overflow: hidden;
-            margin-top: 10px;
-        }
-        .level-bar {
-            height: 100%;
-            background: linear-gradient(90deg, #4facf7, #2ecc71);
-            width: 0%; /* Will be set by JS */
-            transition: width 0.5s ease;
-        }
 
         /* Agent Chat Styles */
         #chat-log {
@@ -306,6 +309,17 @@
         const chatForm = document.getElementById('chat-form');
         const chatInput = document.getElementById('chat-input');
         
+        // Map a percent full to the appropriate GIF from /static
+        function getCauldronGif(percent) {
+            const p = Math.max(0, Math.min(100, Number(percent || 0)));
+            if (p <= 20) return '/static/ten.gif';
+            if (p <= 40) return '/static/twenty.gif';
+            if (p <= 55) return '/static/fourty.gif';
+            if (p <= 70) return '/static/sixty.gif';
+            if (p <= 85) return '/static/eighty.gif';
+            return '/static/hundred.gif';
+        }
+        
         // --- 1. EOG: Render the Cauldron Dashboard ---
         
         async function updateCauldronLevels() {
@@ -349,8 +363,8 @@
                             <div class="cauldron-name">${data.name}</div>
                             <div class="cauldron-percent">${percent.toFixed(1)}% Full</div>
                             <small class="cauldron-volume">(${currentLevel.toFixed(0)}L / ${maxVolume}L)</small>
-                            <div class="level-bar-container">
-                                <div class="level-bar" style="width: ${percent}%"></div>
+                            <div class="cauldron-gif-container">
+                                <img class="cauldron-gif" src="${getCauldronGif(percent)}" alt="Cauldron fullness">
                             </div>
                             <div style="margin-top:8px;font-size:0.9em;color:#ddd">Time to full: <strong class="time-to-fill">—</strong></div>
                             <div class="discrepancy-badge" style="display:none;margin-top:4px;font-size:0.8em;color:#ff6b6b;font-weight:bold;">⚠ Discrepancy</div>
@@ -367,13 +381,16 @@
                         } else {
                             cauldronEl.style.border = '';
                         }
-                        // update texts and bar
+                        // update texts and gif
                         const pctEl = cauldronEl.querySelector('.cauldron-percent');
                         const volEl = cauldronEl.querySelector('.cauldron-volume');
-                        const bar = cauldronEl.querySelector('.level-bar');
+                        const gifEl = cauldronEl.querySelector('.cauldron-gif');
                         if (pctEl) pctEl.textContent = `${percent.toFixed(1)}% Full`;
                         if (volEl) volEl.textContent = `(${currentLevel.toFixed(0)}L / ${maxVolume}L)`;
-                        if (bar) bar.style.width = `${percent}%`;
+                        if (gifEl) {
+                            const newSrc = getCauldronGif(percent);
+                            if (gifEl.getAttribute('src') !== newSrc) gifEl.setAttribute('src', newSrc);
+                        }
                         
                         // show discrepancy badge if marked
                         const badge = cauldronEl.querySelector('.discrepancy-badge');
@@ -391,12 +408,11 @@
                             if (drainPercent) drainPercent.textContent = `${data.drain_progress}%`;
                             // Add blue glow to draining cauldrons
                             cauldronEl.style.boxShadow = '0 0 15px rgba(79, 172, 247, 0.6)';
-                            // Make level bar blue while draining
-                            if (bar) bar.style.background = 'linear-gradient(to right, #4facf7, #2ecc71)';
+                            // Blue glow is handled on container; gif does not change color
                         } else {
                             if (drainStatus) drainStatus.style.display = 'none';
                             cauldronEl.style.boxShadow = '';
-                            if (bar) bar.style.background = '';
+                            // nothing to reset for gif
                         }
                     }
 
@@ -466,9 +482,12 @@
                     if (s.percentPerSec && s.initialTotalSeconds) {
                         const elapsed = Math.max(0, s.initialTotalSeconds - remaining);
                         const newPercent = Math.min(100, (s.startPercent || 0) + (s.percentPerSec * elapsed));
-                        const bar = el.querySelector('.level-bar');
+                        const gifEl = el.querySelector('.cauldron-gif');
                         const pctEl = el.querySelector('.cauldron-percent');
-                        if (bar) bar.style.width = `${newPercent}%`;
+                        if (gifEl) {
+                            const newSrc = getCauldronGif(newPercent);
+                            if (gifEl.getAttribute('src') !== newSrc) gifEl.setAttribute('src', newSrc);
+                        }
                         if (pctEl) pctEl.textContent = `${newPercent.toFixed(1)}% Full`;
                         s.currentPercent = newPercent;
                     }
@@ -1129,7 +1148,7 @@
                                     <div class="cauldron-name">${data.name}</div>
                                     <div class="cauldron-percent">${data.percent_full.toFixed(1)}% Full</div>
                                     <small class="cauldron-volume">(${(data.current_level||0).toFixed(0)}L / ${data.max_volume}L)</small>
-                                    <div class="level-bar-container"><div class="level-bar" style="width:${data.percent_full}%"></div></div>
+                                    <div class="cauldron-gif-container"><img class="cauldron-gif" src="${getCauldronGif(data.percent_full)}" alt="Cauldron fullness"></div>
                                     <div style="margin-top:8px;font-size:0.9em;color:#ddd">Time to full: <strong class="time-to-fill">—</strong></div>
                                 `;
                                 cauldronGrid.appendChild(cauldronEl);
@@ -1138,10 +1157,13 @@
                                 if (data.anomaly) cauldronEl.classList.add('anomaly'); else cauldronEl.classList.remove('anomaly');
                                 const pctEl = cauldronEl.querySelector('.cauldron-percent');
                                 const volEl = cauldronEl.querySelector('.cauldron-volume');
-                                const bar = cauldronEl.querySelector('.level-bar');
+                                const gifEl = cauldronEl.querySelector('.cauldron-gif');
                                 if (pctEl) pctEl.textContent = `${data.percent_full.toFixed(1)}% Full`;
                                 if (volEl) volEl.textContent = `(${(data.current_level||0).toFixed(0)}L / ${data.max_volume}L)`;
-                                if (bar) bar.style.width = `${data.percent_full}%`;
+                                if (gifEl) {
+                                    const newSrc = getCauldronGif(data.percent_full);
+                                    if (gifEl.getAttribute('src') !== newSrc) gifEl.setAttribute('src', newSrc);
+                                }
                             }
                             // ensure playback doesn't show stale fullAt-based timers
                             const state = window._cauldronState = window._cauldronState || {};
