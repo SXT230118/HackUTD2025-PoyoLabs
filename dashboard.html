@@ -386,17 +386,17 @@
                             prev.currentPercent = percent;
                         } else {
                             const delta = serverFullAt - prev.fullAt;
-                            // Only update if delta is significant (> 1 second tolerance to avoid micro-resets from polling drift)
-                            if (Math.abs(delta) > 1000) {
-                                if (delta <= -2000) {
+                            // Only update if delta is significant (> 5 seconds tolerance to prevent micro-resets from calculation variance)
+                            if (Math.abs(delta) > 5000) {
+                                if (delta <= -5000) {
                                     // significant decrease: accept immediately
                                     prev.fullAt = serverFullAt;
                                     prev.initialTotalSeconds = Math.max(1, Math.round((prev.fullAt - nowAdj)/1000));
                                     prev.startPercent = percent;
                                     prev.currentPercent = percent;
-                                } else if (delta > 1000) {
+                                } else if (delta > 5000) {
                                     // increase: allow only a small step to avoid jumping backwards
-                                    const maxIncreaseMs = 5000; // allow up to 5s increase per poll
+                                    const maxIncreaseMs = 10000; // allow up to 10s increase per poll
                                     const allowed = Math.min(delta, maxIncreaseMs);
                                     prev.fullAt = prev.fullAt + allowed;
                                     prev.initialTotalSeconds = Math.max(1, Math.round((prev.fullAt - nowAdj)/1000));
@@ -404,7 +404,7 @@
                                     prev.startPercent = prev.currentPercent || percent;
                                 }
                             }
-                            // else: delta is within ±1s, ignore it—let countdown continue smoothly
+                            // else: delta is within ±5s, ignore it—let countdown continue smoothly
                         }
                     }
                     prev.percentPerSec = percentPerSec;

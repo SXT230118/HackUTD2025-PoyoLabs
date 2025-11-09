@@ -1747,6 +1747,10 @@ def cauldron_status():
     and estimated time to full (minutes) by calling existing tools.
     Frontend dashboard will poll this endpoint.
     """
+    # Calculate request timestamp ONCE for this entire request
+    # This prevents time-to-full from jumping around on every poll
+    request_timestamp = datetime.utcnow().replace(tzinfo=timezone.utc)
+    
     try:
         live_levels_response = get_cauldron_levels()
         if live_levels_response.status_code != 200:
@@ -1828,20 +1832,15 @@ def cauldron_status():
         status['has_discrepancy'] = c.get('id') in suspicious_cauldrons
         status['is_draining'] = is_draining
         status['drain_progress'] = round(drain_progress, 1) if is_draining else 0
-        # as_of timestamp (UTC) so client can align countdowns
+        
+        # Use the shared request_timestamp for all cauldrons in this response
+        # This prevents time-to-full from jumping around
         try:
-            now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)
-            status['as_of'] = now_utc.isoformat()
+            status['as_of'] = request_timestamp.isoformat()
             if time_to_full_seconds is not None:
                 try:
-                    # compute proposed full_at
-                    final_full_at = now_utc + timedelta(seconds=int(time_to_full_seconds))
-                    
-                    # *** BUG FIX: REMOVED THE FLAWED "SMOOTHING POLICY" ***
-                    # The client-side logic is now the only source of truth
-                    # for the 1-second countdown, so we just send the
-                    # most accurate 'full_at' time we have.
-                    
+                    # compute proposed full_at using the shared request timestamp
+                    final_full_at = request_timestamp + timedelta(seconds=int(time_to_full_seconds))
                     status['full_at'] = final_full_at.isoformat()
                 except Exception:
                     status['full_at'] = None
@@ -2341,26 +2340,27 @@ def tickets_match():
                 except Exception:
                     pass
 
-        # Determine suspicious: absolute diff > 5L and >10% of ticket
+        # Determine suspicious: use reasonable thresholds for real-world variance
         suspicious = False
         diff = None
         reason = ''
         if amount is not None and calculated is not None:
             diff = round(amount - calculated, 2)
-            # Reasonable threshold: 10L AND >15% difference (both conditions must be true)
-            if abs(diff) > 10 and abs(diff) > 0.15 * max(1.0, amount):
+            # Very reasonable threshold: Allow 20L difference OR 30% variance
+            # (either condition alone makes it acceptable - only both together is suspicious)
+            if abs(diff) > 20 and abs(diff) > 0.3 * max(1.0, amount):
                 suspicious = True
-                reason = f'Difference {diff}L exceeds threshold (>10L and >15%).'
+                reason = f'Difference {diff}L exceeds both thresholds (>20L AND >30%).'
             else:
                 reason = f'Match OK (diff: {diff}L)'
         elif amount is not None and calculated is None:
-            # No drain event found - only suspicious if it's a large amount
-            if amount > 30:  # Only flag as suspicious if ticket is >30L
+            # No drain event found - only suspicious if it's a very large amount
+            if amount > 80:  # Only flag as suspicious if ticket is >80L (likely real fraud)
                 suspicious = True
-                reason = f'No matching drain event found for {amount}L ticket.'
+                reason = f'No matching drain event found for large {amount}L ticket.'
             else:
-                suspicious = False  # Small tickets without drains are OK
-                reason = f'Small ticket ({amount}L), no drain found (likely noise).'
+                suspicious = False
+                reason = f'No drain found for {amount}L ticket (acceptable - may be timing issue).'
         elif amount is None:
             # Ticket has no amount - can't validate but not suspicious
             suspicious = False
