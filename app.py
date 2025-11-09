@@ -2297,13 +2297,20 @@ def tickets_match():
         calculated = None
         matched_events = []
         
-        # Match drain events ONLY on the exact ticket date (no ±1 day to avoid over-counting)
+        # Match drain events ONLY on the exact ticket date
+        # If multiple drains exist on that day, find the one closest to the ticket amount
         if cauldron_id and match_day and cauldron_id in drains_by_cauldron_day:
-            # Get drains for exact date only
             day_drains = drains_by_cauldron_day.get(cauldron_id, {}).get(match_day, [])
             if day_drains:
-                matched_events = day_drains
-                calculated = sum(d['drained'] for d in matched_events)
+                if amount is not None:
+                    # Find the drain closest to the ticket amount
+                    best_drain = min(day_drains, key=lambda d: abs(d['drained'] - amount))
+                    matched_events = [best_drain]
+                    calculated = best_drain['drained']
+                else:
+                    # No ticket amount, just take the first drain
+                    matched_events = [day_drains[0]]
+                    calculated = day_drains[0]['drained']
 
         # If we couldn't compute from events, fallback to per-sample diff sum
         if calculated is None and cauldron_id:
